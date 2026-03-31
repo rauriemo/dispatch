@@ -4,11 +4,15 @@
 [![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen?logo=pytest)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Dispatch** is a modular voice-first command channel for directing teams of AI agents. Say a wake word, speak a command, hear the response.
+**Dispatch** is a modular voice-first command channel for AI agents. Say a wake word, speak a command, hear the response -- and hear from your agents when *they* have something to say.
 
-Think "air traffic control for AI": each wake word routes to a different agent backend. Dispatch handles the voice pipeline -- wake word detection, speech-to-text, agent routing, text-to-speech -- so your agents just receive text and respond.
+Communication is **bidirectional**. You talk to agents through wake words and voice commands, and agents talk back to you through proactive voice notifications -- alerts, reminders, status updates -- spoken aloud without you asking first. Dispatch registers as a voice-capable device on each agent's gateway, so the agent can push a message to your speakers at any time.
+
+Think "air traffic control for AI": each wake word routes to a different agent backend. Dispatch handles the full voice pipeline -- wake word detection, speech-to-text, agent routing, text-to-speech, and inbound push delivery -- so your agents just send and receive text.
 
 [Architecture](#architecture) | [Configuration](#configuration-reference) | [Adding agents](#adding-a-new-agent)
+
+> **Safety note:** Agents can speak to you unprompted. Proactive messages are queued and played sequentially -- they never overlap with active conversations or each other. Each notification announces the agent name first ("Navi says: ...") so you always know who is talking and why. All voice output goes through Edge TTS with the agent's configured voice; agents cannot execute commands on your machine or access your microphone.
 
 > **Works offline out of the box.** Debug mode replaces all hardware and cloud dependencies with keyboard input. No microphone, no Picovoice account, no Google Cloud credentials needed to try it.
 
