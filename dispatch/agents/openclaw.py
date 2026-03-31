@@ -1,4 +1,9 @@
-"""OpenClaw agent -- WebSocket gateway protocol for chat + push notifications."""
+"""OpenClaw agent -- WebSocket gateway protocol for chat + push notifications.
+
+Dual-connection architecture:
+  1. Operator connection (cli mode) -- chat.send, receive responses
+  2. Node connection (voice capability) -- receive proactive invoke commands
+"""
 
 from __future__ import annotations
 
@@ -22,7 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CLIENT_TYPE = "cli"
+_OPERATOR_CLIENT_ID = "cli"
+_NODE_CLIENT_ID = "node-host"
 _CLIENT_VERSION = "0.1.0"
 _PROTOCOL_VERSION = 3
 
@@ -34,9 +40,11 @@ class OpenClawAgent(BaseAgent):
         self.token_env = token_env
         self._http = httpx.AsyncClient(timeout=10.0)
         self._ws = None
+        self._node_ws = None
         self._device_key = load_or_create_key()
         self._pending: dict[str, asyncio.Future] = {}
         self._recv_task: asyncio.Task | None = None
+        self._node_recv_task: asyncio.Task | None = None
         self._notification_queue: NotificationQueue | None = None
         self._session_key: str = uuid.uuid4().hex
 
@@ -51,7 +59,6 @@ class OpenClawAgent(BaseAgent):
     # -- BaseAgent interface ---------------------------------------------------
 
     async def connect(self) -> None:
-        # Health check (best-effort)
         try:
             resp = await self._http.get(f"{self.endpoint}/healthz")
             resp.raise_for_status()
@@ -64,15 +71,15 @@ class OpenClawAgent(BaseAgent):
             )
             return
 
-        # WebSocket handshake
+        # Operator WebSocket (chat)
         try:
             self._ws = await websockets.connect(self._ws_uri)
             await self._handshake()
             self._recv_task = asyncio.create_task(self._recv_loop())
-            logger.info("OpenClaw WebSocket connected to %s", self._ws_uri)
+            logger.info("OpenClaw operator connected to %s", self._ws_uri)
         except Exception:
             logger.warning(
-                "OpenClaw WebSocket handshake failed at %s -- agent degraded",
+                "OpenClaw operator handshake failed at %s -- agent degraded",
                 self._ws_uri,
                 exc_info=True,
             )
@@ -82,6 +89,29 @@ class OpenClawAgent(BaseAgent):
                 except Exception:
                     pass
             self._ws = None
+
+        # Node WebSocket (voice capability for proactive push)
+        await self._connect_node()
+
+    async def _connect_node(self) -> None:
+        """Open a second WebSocket as a node with voice capability."""
+        try:
+            self._node_ws = await websockets.connect(self._ws_uri)
+            await self._node_handshake()
+            self._node_recv_task = asyncio.create_task(self._node_recv_loop())
+            logger.info("OpenClaw node connected to %s (caps: voice)", self._ws_uri)
+        except Exception:
+            logger.warning(
+                "OpenClaw node handshake failed at %s -- voice push unavailable",
+                self._ws_uri,
+                exc_info=True,
+            )
+            if self._node_ws is not None:
+                try:
+                    await self._node_ws.close()
+                except Exception:
+                    pass
+            self._node_ws = None
 
     async def send(self, text: str) -> str:
         if self._ws is None:
@@ -113,66 +143,75 @@ class OpenClawAgent(BaseAgent):
             self._pending.pop(req_id, None)
 
     async def disconnect(self) -> None:
-        if self._recv_task is not None:
-            self._recv_task.cancel()
-            try:
-                await self._recv_task
-            except asyncio.CancelledError:
-                pass
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
+        for task in (self._recv_task, self._node_recv_task):
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        for ws in (self._ws, self._node_ws):
+            if ws is not None:
+                await ws.close()
+        self._ws = None
+        self._node_ws = None
         self._fail_pending()
         await self._http.aclose()
 
     async def subscribe(self, queue: NotificationQueue) -> None:
         self._notification_queue = queue
 
-    # -- Internal --------------------------------------------------------------
+    # -- Handshake -------------------------------------------------------------
 
-    async def _handshake(self) -> None:
-        """Complete the gateway connect handshake."""
-        # 1. Receive challenge
-        raw = await asyncio.wait_for(self._ws.recv(), timeout=10.0)
+    async def _perform_handshake(
+        self,
+        ws,
+        *,
+        role: str,
+        client_id: str,
+        client_mode: str,
+        scopes: list[str],
+        caps: list[str] | None = None,
+        commands: list[str] | None = None,
+        permissions: dict | None = None,
+    ) -> None:
+        """Complete the gateway connect handshake on a given WebSocket."""
+        raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
         challenge = json.loads(raw)
         if challenge.get("event") != "connect.challenge":
             raise AgentError(f"Expected connect.challenge, got: {challenge.get('event')}")
 
         nonce = challenge["payload"]["nonce"]
 
-        # 2. Build v2 signature payload and sign
         fp = device_fingerprint(self._device_key)
         pub_b64 = public_key_b64(self._device_key)
         signed_at_ms = int(time.time() * 1000)
-        role = "operator"
-        scopes = ["operator.read", "operator.write"]
         token = self._token
 
         sig_payload = "|".join([
-            "v2", fp, _CLIENT_TYPE, _CLIENT_TYPE, role,
+            "v2", fp, client_id, client_mode, role,
             ",".join(scopes), str(signed_at_ms), token or "", nonce,
         ])
         signature = sign_payload(self._device_key, sig_payload)
 
-        req_id = uuid.uuid4().hex
         connect_req = {
             "type": "req",
-            "id": req_id,
+            "id": uuid.uuid4().hex,
             "method": "connect",
             "params": {
                 "minProtocol": _PROTOCOL_VERSION,
                 "maxProtocol": _PROTOCOL_VERSION,
                 "client": {
-                    "id": _CLIENT_TYPE,
+                    "id": client_id,
                     "version": _CLIENT_VERSION,
                     "platform": "windows",
-                    "mode": _CLIENT_TYPE,
+                    "mode": client_mode,
                 },
                 "role": role,
                 "scopes": scopes,
-                "caps": [],
-                "commands": [],
-                "permissions": {},
+                "caps": caps or [],
+                "commands": commands or [],
+                "permissions": permissions or {},
                 "auth": {"token": token},
                 "locale": "en-US",
                 "userAgent": f"dispatch/{_CLIENT_VERSION}",
@@ -185,14 +224,38 @@ class OpenClawAgent(BaseAgent):
                 },
             },
         }
-        await self._ws.send(json.dumps(connect_req))
+        await ws.send(json.dumps(connect_req))
 
-        # 3. Receive hello-ok
-        raw = await asyncio.wait_for(self._ws.recv(), timeout=10.0)
+        raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
         res = json.loads(raw)
         if not res.get("ok"):
             raise AgentError(f"OpenClaw connect rejected: {res}")
-        logger.info("OpenClaw handshake complete (protocol %d)", _PROTOCOL_VERSION)
+        logger.info("OpenClaw %s handshake complete (protocol %d)", role, _PROTOCOL_VERSION)
+
+    async def _handshake(self) -> None:
+        """Operator handshake on self._ws."""
+        await self._perform_handshake(
+            self._ws,
+            role="operator",
+            client_id=_OPERATOR_CLIENT_ID,
+            client_mode=_OPERATOR_CLIENT_ID,
+            scopes=["operator.read", "operator.write"],
+        )
+
+    async def _node_handshake(self) -> None:
+        """Node handshake on self._node_ws."""
+        await self._perform_handshake(
+            self._node_ws,
+            role="node",
+            client_id=_NODE_CLIENT_ID,
+            client_mode="node",
+            scopes=[],
+            caps=["voice"],
+            commands=["voice.speak"],
+            permissions={"voice.speak": True},
+        )
+
+    # -- Pending management ----------------------------------------------------
 
     def _fail_pending(self) -> None:
         """Resolve all pending request futures with a disconnect error."""
@@ -201,8 +264,10 @@ class OpenClawAgent(BaseAgent):
                 fut.set_exception(AgentError("OpenClaw WebSocket disconnected"))
         self._pending.clear()
 
+    # -- Operator recv loop ----------------------------------------------------
+
     async def _recv_loop(self) -> None:
-        """Background task: dispatch incoming frames, auto-reconnect on disconnect."""
+        """Background task: dispatch incoming operator frames, auto-reconnect."""
         backoff = 1
         try:
             while True:
@@ -249,6 +314,54 @@ class OpenClawAgent(BaseAgent):
         except asyncio.CancelledError:
             logger.info("WebSocket recv loop for %s cancelled", self.name)
 
+    # -- Node recv loop --------------------------------------------------------
+
+    async def _node_recv_loop(self) -> None:
+        """Background task: handle invoke commands on the node connection."""
+        backoff = 1
+        try:
+            while True:
+                if self._node_ws is not None:
+                    try:
+                        async for raw in self._node_ws:
+                            backoff = 1
+                            try:
+                                msg = json.loads(raw)
+                            except json.JSONDecodeError:
+                                logger.warning("Malformed node frame from %s", self.name)
+                                continue
+
+                            logger.debug("Node frame: %s", msg)
+                            if msg.get("type") == "req":
+                                await self._handle_invoke(msg)
+                    except websockets.ConnectionClosed:
+                        logger.warning("Node WebSocket closed for %s", self.name)
+
+                self._node_ws = None
+
+                logger.info("Reconnecting node %s in %ds...", self.name, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+                try:
+                    self._node_ws = await websockets.connect(self._ws_uri)
+                    await self._node_handshake()
+                    logger.info("OpenClaw node reconnected to %s", self._ws_uri)
+                except Exception:
+                    logger.warning(
+                        "Node reconnect failed for %s", self.name, exc_info=True,
+                    )
+                    if self._node_ws is not None:
+                        try:
+                            await self._node_ws.close()
+                        except Exception:
+                            pass
+                        self._node_ws = None
+        except asyncio.CancelledError:
+            logger.info("Node recv loop for %s cancelled", self.name)
+
+    # -- Event/invoke handlers -------------------------------------------------
+
     async def _handle_event(self, msg: dict) -> None:
         event_name = msg.get("event", "")
         payload = msg.get("payload", {})
@@ -264,20 +377,50 @@ class OpenClawAgent(BaseAgent):
                     fut._text_buf.append(delta)  # type: ignore[attr-defined]
 
         elif event_name == "chat" and payload.get("state") == "final":
+            message = payload.get("message", {})
+            content = message.get("content", [])
+            text = "".join(
+                c.get("text", "") for c in content if c.get("type") == "text"
+            )
+
             if run_id and run_id in self._pending:
                 fut = self._pending[run_id]
-                message = payload.get("message", {})
-                content = message.get("content", [])
-                text = "".join(
-                    c.get("text", "") for c in content if c.get("type") == "text"
-                )
                 if not text:
                     text = "".join(getattr(fut, "_text_buf", []))
                 if not fut.done():
                     fut.set_result(text or "No response text received.")
+            elif text:
+                await self._enqueue_notification(text)
 
         elif event_name == "notification":
             await self._handle_notification(payload)
+
+    async def _handle_invoke(self, msg: dict) -> None:
+        """Handle an invoke command from the gateway on the node connection."""
+        req_id = msg.get("id")
+        params = msg.get("params", {})
+        command = params.get("command", "")
+
+        if command == "voice.speak":
+            text = params.get("args", {}).get("text", "")
+            if text:
+                await self._enqueue_notification(text, priority=0)
+            if req_id and self._node_ws:
+                await self._node_ws.send(json.dumps({
+                    "type": "res",
+                    "id": req_id,
+                    "ok": True,
+                    "payload": {},
+                }))
+        else:
+            logger.warning("Unknown invoke command from gateway: %s", command)
+            if req_id and self._node_ws:
+                await self._node_ws.send(json.dumps({
+                    "type": "res",
+                    "id": req_id,
+                    "ok": False,
+                    "error": {"code": "UNKNOWN_COMMAND", "message": f"unknown: {command}"},
+                }))
 
     def _handle_response(self, msg: dict) -> None:
         req_id = msg.get("id")
@@ -289,19 +432,26 @@ class OpenClawAgent(BaseAgent):
             if not fut.done():
                 fut.set_exception(AgentError(f"OpenClaw error: {msg.get('error') or msg.get('payload')}"))
 
-    async def _handle_notification(self, payload: dict) -> None:
+    # -- Notification helpers --------------------------------------------------
+
+    async def _enqueue_notification(self, text: str, priority: int = 1) -> None:
+        """Push a notification to the queue for TTS playback by the main loop."""
         if self._notification_queue is None:
+            logger.warning("Notification dropped (no queue): %s", text[:80])
             return
-        priority = 0 if payload.get("urgent") else 1
         notif = Notification(
             priority=priority,
             timestamp=time.time(),
             agent_name=self.name,
             agent_voice=self.voice,
-            text=payload.get("text", ""),
+            text=text,
         )
         await self._notification_queue.put(notif)
-        logger.info("Notification from %s: %s", self.name, notif.text[:80])
+        logger.info("Notification from %s: %s", self.name, text[:80])
+
+    async def _handle_notification(self, payload: dict) -> None:
+        priority = 0 if payload.get("urgent") else 1
+        await self._enqueue_notification(payload.get("text", ""), priority)
 
 
 # -- HTTP fallback (disabled) -------------------------------------------------
@@ -324,5 +474,4 @@ class OpenClawAgent(BaseAgent):
 #     return "No response text received."
 
 
-# Register with the router
 AgentRouter.register("openclaw", OpenClawAgent)

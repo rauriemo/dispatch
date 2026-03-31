@@ -1,6 +1,7 @@
 """Tests for dispatch.audio -- state machine, chime, DebugPipeline."""
 
 import array
+import asyncio
 import math
 import queue
 import sys
@@ -108,11 +109,28 @@ class TestChimeGeneration:
 
 class TestDebugPipeline:
     async def test_debug_pipeline_listen_returns_zero(self, sample_config):
-        """DebugPipeline.listen() should return 0 (keyword_index=0)."""
+        """DebugPipeline.listen() should return 0 when Enter is pressed."""
         pipeline = DebugPipeline(sample_config)
-        with patch("dispatch.audio.asyncio.to_thread", new_callable=AsyncMock, return_value=""):
-            result = await pipeline.listen()
+        loop = asyncio.get_running_loop()
+        pipeline._loop = loop
+        pipeline._wake_event = asyncio.Event()
+        pipeline._input_thread = threading.Thread()  # stub so listen() skips spawn
+
+        # Simulate Enter press arriving just after listen() clears the event
+        loop.call_soon(pipeline._wake_event.set)
+        result = await pipeline.listen()
         assert result == 0
+
+    async def test_debug_pipeline_listen_timeout_returns_none(self, sample_config):
+        """DebugPipeline.listen() should return None on timeout."""
+        pipeline = DebugPipeline(sample_config)
+        loop = asyncio.get_running_loop()
+        pipeline._loop = loop
+        pipeline._wake_event = asyncio.Event()
+        pipeline._input_thread = threading.Thread()  # stub
+
+        result = await pipeline.listen(timeout=0.05)
+        assert result is None
 
     def test_debug_pipeline_has_frame_queue(self, sample_config):
         """DebugPipeline must expose a frame_queue attribute."""

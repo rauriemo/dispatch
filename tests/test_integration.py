@@ -1,6 +1,8 @@
 """Integration tests -- debug mode full cycle, error paths."""
 
+import asyncio
 import textwrap
+import threading
 
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -27,12 +29,13 @@ class TestDebugFullCycle:
         agent.connect = AsyncMock()
         agent.disconnect = AsyncMock()
 
-        # Wire the debug pipeline
+        # Wire the debug pipeline and simulate wake word via event
         pipeline = DebugPipeline(sample_config)
-
-        # Simulate wake word (listen returns 0)
-        with patch("dispatch.audio.asyncio.to_thread", new_callable=AsyncMock, return_value=""):
-            keyword_index = await pipeline.listen()
+        pipeline._loop = asyncio.get_running_loop()
+        pipeline._wake_event = asyncio.Event()
+        pipeline._input_thread = threading.Thread()  # stub to skip thread spawn
+        pipeline._loop.call_soon(pipeline._wake_event.set)
+        keyword_index = await pipeline.listen()
 
         assert keyword_index == 0
 

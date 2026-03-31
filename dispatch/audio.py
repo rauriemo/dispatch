@@ -151,19 +151,41 @@ class DebugPipeline:
     """Keyboard-based fallback when Picovoice is unavailable.
 
     Same interface as AudioPipeline so main.py doesn't branch.
+    Uses a persistent input thread + asyncio.Event so listen() respects
+    timeouts and the main loop can drain notifications between cycles.
     """
 
     def __init__(self, config) -> None:
         self.frame_queue: queue.Queue = queue.Queue()
         self._chime = _generate_chime()
+        self._input_thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._wake_event: Optional[asyncio.Event] = None
+
+    def _input_loop(self) -> None:
+        """Background thread: waits for Enter key presses."""
+        while True:
+            try:
+                input("Press Enter for wake word> ")
+            except EOFError:
+                break
+            if self._loop and self._wake_event:
+                self._loop.call_soon_threadsafe(self._wake_event.set)
 
     async def listen(self, timeout: float = 2.0) -> Optional[int]:
-        """Wait for Enter key press, return keyword_index=0."""
+        """Wait for Enter key press with timeout. Returns 0 or None."""
+        if self._input_thread is None:
+            self._loop = asyncio.get_running_loop()
+            self._wake_event = asyncio.Event()
+            self._input_thread = threading.Thread(target=self._input_loop, daemon=True)
+            self._input_thread.start()
+
+        self._wake_event.clear()
         try:
-            await asyncio.to_thread(input, "Press Enter for wake word> ")
+            await asyncio.wait_for(self._wake_event.wait(), timeout=timeout)
             self._chime.play()
             return 0
-        except EOFError:
+        except asyncio.TimeoutError:
             return None
 
     def set_state(self, state: PipelineState) -> None:

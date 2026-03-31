@@ -20,6 +20,15 @@ Transitions: LISTENING->RECORDING on wake word detection, RECORDING->LISTENING w
 
 Maps wake-word keyword indices to agent instances. A type registry (`{"openclaw": OpenClawAgent, ...}`) instantiates agents from `agents.yaml` config. Async context manager -- `__aenter__` connects all agents, `__aexit__` disconnects them. If an agent fails to connect at startup, it logs a warning and continues degraded.
 
+### Dual-connection architecture (OpenClaw)
+
+Each OpenClawAgent opens two WebSocket connections to the same gateway endpoint:
+
+1. **Operator connection** (`client.mode: "cli"`, `role: "operator"`) -- sends `chat.send` requests and receives streaming response events. This is the interactive chat path.
+2. **Node connection** (`client.mode: "node"`, `role: "node"`, `caps: ["voice"]`) -- registers Dispatch as a voice-capable device. The gateway can invoke `voice.speak` on this connection to deliver proactive messages without a prior user request.
+
+Both connections use the same device keypair and auto-reconnect independently. If the node connection fails (e.g., gateway rejects the client ID), the operator connection still works -- proactive push is degraded but chat is unaffected. Unrequested events on the operator connection are also routed to the notification queue as a fallback.
+
 ### Debug mode
 
 `--debug` swaps `AudioPipeline` for `DebugPipeline` (Enter key simulates wake word) and `stream_transcribe` for `debug_transcribe` (typed input). Same interfaces, so `main.py` never branches. Runs the full pipeline without Picovoice or Google Cloud accounts.
@@ -30,8 +39,9 @@ Maps wake-word keyword indices to agent instances. A type registry (`{"openclaw"
 Main thread        asyncio event loop (main.py run())
                    ├── wake word listen (awaits asyncio.Event)
                    ├── TTS playback (edge-tts async stream + pygame poll)
-                   ├── agent send (WebSocket JSON frame)
-                   ├── WebSocket recv loop (asyncio.Task, auto-reconnect)
+                   ├── agent send (WebSocket JSON frame, operator connection)
+                   ├── operator recv loop (asyncio.Task, auto-reconnect)
+                   ├── node recv loop (asyncio.Task, auto-reconnect, voice invokes)
                    └── notification drain loop
 
 Capture thread     threading.Thread (AudioPipeline._capture_loop)
@@ -59,7 +69,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/config.py` | `DispatchConfig`/`AgentConfig` dataclasses, YAML + .env loading, validation |
 | `dispatch/notifications.py` | `Notification` dataclass, `NotificationQueue` (asyncio.PriorityQueue wrapper) |
 | `dispatch/agents/base.py` | `BaseAgent` ABC, `AgentError`, `AgentRouter` (type registry + routing) |
-| `dispatch/agents/openclaw.py` | `OpenClawAgent` -- WebSocket gateway (chat + notifications), auto-reconnect |
+| `dispatch/agents/openclaw.py` | `OpenClawAgent` -- dual WebSocket (operator chat + node voice), auto-reconnect |
 | `dispatch/crypto.py` | Ed25519 device identity for OpenClaw gateway handshake |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
 | `agents.yaml` | Agent registry: type, wake word path, endpoint, token env var, TTS voice |
@@ -89,7 +99,8 @@ Install deps first: `pip install -r requirements.txt`
 - **Hotkey format**: pynput requires angle brackets: `<ctrl>+<shift>+n`. Stored in this exact format in `agents.yaml`. Malformed strings are silently ignored.
 - **Chime**: 150ms 880Hz sine wave via `array.array('h')` + `math.sin()`, loaded as `pygame.mixer.Sound(buffer=...)`. No numpy.
 - **Context managers**: `AgentRouter` (async with), `AudioPipeline`/`DebugPipeline` (with), `httpx.AsyncClient` -- guaranteed cleanup.
-- **WebSocket auto-reconnect**: `_recv_loop` reconnects with exponential backoff (1–30s) on disconnect, re-handshakes, and resumes frame processing.
+- **WebSocket auto-reconnect**: both `_recv_loop` (operator) and `_node_recv_loop` (node) reconnect independently with exponential backoff (1–30s) on disconnect, re-handshake, and resume frame processing.
+- **Unrequested events**: `chat` events with `state: "final"` whose `runId` doesn't match a pending request are treated as proactive push messages and routed to the notification queue.
 - **No audio on disk**: mic frames processed in-place, TTS goes to BytesIO.
 - **Single audio capture**: one pvrecorder instance shared via state machine -- never two mic readers.
 
@@ -191,6 +202,38 @@ openclaw devices approve <requestId>
 # or inside Docker: docker exec -it <container> openclaw devices approve <requestId>
 ```
 After approval the device key is trusted for future connects.
+
+### Node connection (voice capability)
+
+A second WebSocket connects as a node to receive proactive invocations from the gateway.
+
+**Node connect params (differences from operator):**
+```json
+{
+  "client": {"id": "node-host", "version": "0.1.0", "platform": "windows", "mode": "node"},
+  "role": "node",
+  "scopes": [],
+  "caps": ["voice"],
+  "commands": ["voice.speak"],
+  "permissions": {"voice.speak": true}
+}
+```
+
+The signature payload uses the same v2 format with the node's role/scopes/clientId/clientMode values. Same device keypair, so the gateway sees both connections as the same device with different roles.
+
+**Invoke protocol:** The gateway sends a `req` frame to the node connection when the agent wants to speak:
+```json
+{"type":"req","id":"<uuid>","method":"invoke","params":{"command":"voice.speak","args":{"text":"..."}}}
+```
+
+Dispatch queues the text as an urgent notification (priority 0) and acks:
+```json
+{"type":"res","id":"<uuid>","ok":true,"payload":{}}
+```
+
+The main loop's notification drain picks it up and plays it via TTS. This is the path for proactive "computer messages" from the agent.
+
+**First-run pairing:** The node connection requires a separate pairing approval since it connects with `role: "node"` (different from the operator pairing).
 
 Health check: `GET /healthz` (called during `connect()`). Failure logs a warning, does not crash.
 
