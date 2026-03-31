@@ -8,5 +8,6 @@ pyyaml
 httpx
 websockets
 python-dotenv
+cryptography
 pystray
 Pillow

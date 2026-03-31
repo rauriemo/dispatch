@@ -95,7 +95,7 @@ Agents can also **push notifications** to Dispatch via WebSocket. Urgent alerts 
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 46 tests covering config, routing, HTTP contracts, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
+- **Fully tested**: 52 tests covering config, routing, WebSocket gateway protocol, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
 
 ## Prerequisites
 
@@ -104,7 +104,7 @@ Agents can also **push notifications** to Dispatch via WebSocket. Urgent alerts 
 | Python 3.11+ | Everything | Yes |
 | [Picovoice account](https://console.picovoice.ai) | Wake word detection | No -- keyboard fallback |
 | [Google Cloud STT](https://cloud.google.com/speech-to-text) | Speech-to-text | No -- typed input fallback |
-| IAP tunnel to OpenClaw VM | Navi agent | No -- agent fails gracefully |
+| IAP tunnel to OpenClaw VM | Navi agent (WebSocket gateway) | No -- agent fails gracefully |
 | Edge TTS | Voice responses | Yes (free, no account) |
 
 ## Going Live
@@ -126,9 +126,21 @@ cp hey-navi_en_windows.ppn assets/hey-navi.ppn
 # 3. Start the IAP tunnel to your OpenClaw VM (separate terminal)
 gcloud compute start-iap-tunnel openclaw-vm 18789 --local-host-port=localhost:18789 --zone=southamerica-east1-a
 
-# 4. Run live
+# 4. Run live (first run will require device pairing -- see below)
 python -m dispatch
 ```
+
+### First-Run Device Pairing
+
+On first connect, OpenClaw requires device approval. Dispatch generates an Ed25519 keypair (stored in `.dispatch_device_key`) and the gateway returns a pairing request. Approve it on the gateway host:
+
+```bash
+openclaw devices approve <requestId>
+# or inside Docker:
+docker exec -it <container> openclaw devices approve <requestId>
+```
+
+The request ID is logged in Dispatch's output. After approval the device is trusted for all future connects.
 
 ## Configuration Reference
 
@@ -229,7 +241,7 @@ One `pvrecorder` instance captures mic frames in a background thread. In LISTENI
 
 | Thread | Runs | Communicates via |
 |---|---|---|
-| Main (asyncio) | Event loop, agent calls, TTS, notification drain | -- |
+| Main (asyncio) | Event loop, agent WS send/recv, TTS, notification drain | -- |
 | Capture | `pvrecorder.read()` loop, Porcupine processing | `loop.call_soon_threadsafe()` |
 | STT | `streaming_recognize()` (blocking gRPC) | `queue.Queue` (stdlib) |
 | Hotkey | `pynput.GlobalHotKeys` (daemon) | `loop.call_soon_threadsafe()` |
@@ -267,10 +279,10 @@ python -m dispatch                  # Live mode
 | Google Cloud STT streaming | Complete | Blocking gRPC in thread, debug fallback |
 | Edge TTS playback | Complete | In-memory BytesIO, per-agent voice |
 | Agent routing | Complete | Type registry, config-driven |
-| OpenClaw agent | Complete | POST /v1/responses, health check |
-| Push notifications | Complete | WebSocket with auto-reconnect, priority queue |
+| OpenClaw agent | Complete | WebSocket gateway, Ed25519 device auth, streaming chat |
+| Push notifications | Complete | Same WebSocket connection, priority queue |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
-| Test suite | Complete | 46 tests, full offline coverage |
+| Test suite | Complete | 52 tests, full offline coverage |
 | Wake word (live) | Waiting | Picovoice account approval pending |
 | Google STT (live) | Ready | API enabled, service account key needed |
 
