@@ -30,6 +30,7 @@ class DispatchConfig:
     log_level: str
     agents: list[AgentConfig]
     debug: bool
+    webhook_port: int = 0
 
 
 def load_config(debug: bool = False) -> DispatchConfig:
@@ -60,12 +61,15 @@ def load_config(debug: bool = False) -> DispatchConfig:
             voice=cfg["voice"],
         ))
 
+    webhook_port = settings.get("webhook_port", 0)
+
     config = DispatchConfig(
         hotkey=hotkey,
         audio_device=audio_device,
         log_level=log_level,
         agents=agents,
         debug=debug,
+        webhook_port=webhook_port,
     )
 
     _validate(config)

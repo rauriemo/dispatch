@@ -29,6 +29,26 @@ Each OpenClawAgent opens two WebSocket connections to the same gateway endpoint:
 
 Both connections use the same device keypair and auto-reconnect independently. If the node connection fails (e.g., gateway rejects the client ID), the operator connection still works -- proactive push is degraded but chat is unaffected. Unrequested events on the operator connection are also routed to the notification queue as a fallback.
 
+### Webhook endpoint (scheduled delivery)
+
+Dispatch runs a lightweight `aiohttp.web` HTTP server on `127.0.0.1` (localhost only) to receive notifications from external sources like OpenClaw cron jobs. This bridges the gap where scheduled agent turns run in an isolated context and cannot invoke `voice.speak` on the node WebSocket.
+
+Three notification delivery paths, all converging on the same `NotificationQueue`:
+
+```
+1. Interactive  -- user speaks -> agent responds via operator WebSocket -> _handle_event
+2. Live push    -- agent invokes voice.speak on node WebSocket -> _handle_invoke
+3. Scheduled    -- cron job POSTs to webhook endpoint -> webhook handler
+```
+
+Webhook details:
+- `POST /notify` accepts `{"agent": "navi", "text": "...", "priority": 1}`, validates the payload, looks up the agent's voice from a name-to-voice dict, creates a `Notification`, and pushes it to the `NotificationQueue`.
+- Optional auth via `DISPATCH_WEBHOOK_SECRET` env var (checked against `Authorization: Bearer <secret>` header).
+- Port configured via `webhook_port` in `agents.yaml` settings (0 = disabled, default 18790).
+- If the server fails to bind, Dispatch logs a warning and continues with webhook delivery unavailable (consistent degraded-mode pattern).
+
+This is **opt-in per cron job**: only reminders the user explicitly asks to be delivered via Dispatch should target this endpoint. The routing decision lives on the OpenClaw side at cron creation time, not in Dispatch. Dispatch is a passive receiver -- if nothing POSTs to it, nothing plays.
+
 ### Debug mode
 
 `--debug` swaps `AudioPipeline` for `DebugPipeline` (Enter key simulates wake word) and `stream_transcribe` for `debug_transcribe` (typed input). Same interfaces, so `main.py` never branches. Runs the full pipeline without Picovoice or Google Cloud accounts.
@@ -42,6 +62,7 @@ Main thread        asyncio event loop (main.py run())
                    ├── agent send (WebSocket JSON frame, operator connection)
                    ├── operator recv loop (asyncio.Task, auto-reconnect)
                    ├── node recv loop (asyncio.Task, auto-reconnect, voice invokes)
+                   ├── webhook server (aiohttp on 127.0.0.1, POST /notify)
                    └── notification drain loop
 
 Capture thread     threading.Thread (AudioPipeline._capture_loop)
@@ -71,9 +92,10 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/agents/base.py` | `BaseAgent` ABC, `AgentError`, `AgentRouter` (type registry + routing) |
 | `dispatch/agents/openclaw.py` | `OpenClawAgent` -- dual WebSocket (operator chat + node voice), auto-reconnect |
 | `dispatch/crypto.py` | Ed25519 device identity for OpenClaw gateway handshake |
+| `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
 | `agents.yaml` | Agent registry: type, wake word path, endpoint, token env var, TTS voice |
-| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS` |
+| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
 
@@ -101,6 +123,7 @@ Install deps first: `pip install -r requirements.txt`
 - **Context managers**: `AgentRouter` (async with), `AudioPipeline`/`DebugPipeline` (with), `httpx.AsyncClient` -- guaranteed cleanup.
 - **WebSocket auto-reconnect**: both `_recv_loop` (operator) and `_node_recv_loop` (node) reconnect independently with exponential backoff (1–30s) on disconnect, re-handshake, and resume frame processing.
 - **Unrequested events**: `chat` events with `state: "final"` whose `runId` doesn't match a pending request are treated as proactive push messages and routed to the notification queue.
+- **Webhook server**: `aiohttp.web` on `127.0.0.1` only (never `0.0.0.0`). Disabled when `webhook_port` is 0. Auth is optional (`DISPATCH_WEBHOOK_SECRET` env var). The agent-name-to-voice lookup dict is built from the `AgentRouter`'s agent list at startup.
 - **No audio on disk**: mic frames processed in-place, TTS goes to BytesIO.
 - **Single audio capture**: one pvrecorder instance shared via state machine -- never two mic readers.
 
@@ -108,7 +131,7 @@ Install deps first: `pip install -r requirements.txt`
 
 Two-layer split (12-Factor pattern). `agents.yaml` holds structural config and references env var **names** for secrets (e.g., `token_env: OPENCLAW_TOKEN`). `.env` holds the actual secret values, loaded at startup via `python-dotenv`. Never put secret values in `agents.yaml`.
 
-Validation is contextual: `PICOVOICE_ACCESS_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` are only required outside debug mode. Agent tokens are warned about but don't block startup (the agent will fail at runtime instead).
+Validation is contextual: `PICOVOICE_ACCESS_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` are only required outside debug mode. Agent tokens are warned about but don't block startup (the agent will fail at runtime instead). `DISPATCH_WEBHOOK_SECRET` is optional -- if unset, the webhook endpoint accepts unauthenticated requests (acceptable for localhost-only).
 
 ## OpenClaw API contract
 
@@ -237,6 +260,38 @@ The main loop's notification drain picks it up and plays it via TTS. This is the
 
 Health check: `GET /healthz` (called during `connect()`). Failure logs a warning, does not crash.
 
+### Webhook endpoint contract
+
+Dispatch listens on `http://127.0.0.1:<webhook_port>/notify` for scheduled delivery.
+
+**Request:**
+```
+POST /notify HTTP/1.1
+Content-Type: application/json
+Authorization: Bearer <DISPATCH_WEBHOOK_SECRET>  (optional, only if secret is configured)
+
+{"agent": "navi", "text": "Time for your standup!", "priority": 1}
+```
+
+- `agent` (required): agent name matching an entry in `agents.yaml`. Used to look up the TTS voice.
+- `text` (required): the message to speak via TTS.
+- `priority` (optional): 0 = urgent, 1 = normal. Defaults to 1.
+
+**Responses:**
+- `200 {"ok": true}` -- notification queued for TTS
+- `400 {"ok": false, "error": "..."}` -- missing/invalid fields or malformed JSON
+- `401 {"ok": false, "error": "unauthorized"}` -- wrong or missing auth token (when secret is configured)
+- `404 {"ok": false, "error": "unknown agent"}` -- agent name not found in registry
+
+**OpenClaw cron setup (agent-side, not Dispatch code):**
+
+Only reminders the user explicitly requests for voice delivery should target this endpoint. Example cron creation on the OpenClaw side:
+```
+/cron add --every 30m --webhook http://localhost:18790/notify --payload '{"agent":"navi","text":"Check the deploy status"}'
+```
+
+The agent should recognize delivery intent keywords ("on Dispatch", "voice reminder", "speak it") and only configure the webhook URL for those cron jobs. Normal reminders without Dispatch mention should not target the webhook.
+
 ## Wake word constraints
 
 - Picovoice recommends 6+ phonemes for reliable detection with minimal false positives
@@ -263,7 +318,7 @@ Full catalog: `edge-tts --list-voices`. Swap any voice by editing one line in `a
 
 `Notification` is a `@dataclass(order=True)` with priority field: `0` = urgent, `1` = normal (lower number = higher priority). Ties broken by timestamp.
 
-`NotificationQueue` wraps `asyncio.PriorityQueue` -- both producer (WebSocket task) and consumer (main loop) are async on the same event loop, so no thread boundary.
+`NotificationQueue` wraps `asyncio.PriorityQueue` -- all producers (operator recv loop, node recv loop, webhook handler) and the consumer (main loop drain) are async on the same event loop, so no thread boundary.
 
 Playback rules:
 - Agent name announced before every notification ("Navi says: ...")

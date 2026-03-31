@@ -2,6 +2,7 @@ settings:
   hotkey: "<ctrl>+<shift>+n"
   audio_device: -1
   log_level: INFO
+  webhook_port: 18790
 
 agents:
   navi:

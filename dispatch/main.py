@@ -15,6 +15,7 @@ from dispatch.notifications import NotificationQueue
 from dispatch.stt import debug_transcribe, stream_transcribe
 from dispatch.tts import speak
 from dispatch.agents import AgentError, AgentRouter
+from dispatch.webhook import WebhookServer
 
 logger = logging.getLogger(__name__)
 
@@ -85,75 +86,96 @@ def main(debug: bool = False) -> None:
             for agent in router.agents:
                 await agent.subscribe(notification_queue)
 
-            with pipeline_cls(config) as pipeline:
-                # Toggle callback (called from hotkey thread)
-                def on_toggle():
-                    nonlocal active
-                    active = not active
-                    if active:
-                        pipeline.resume()
-                        logger.info("Dispatch resumed")
-                        if tray_icon:
-                            tray_icon.icon = _make_icon("green")
-                    else:
-                        pipeline.pause()
-                        logger.info("Dispatch paused")
-                        if tray_icon:
-                            tray_icon.icon = _make_icon("gray")
+            # Webhook server for scheduled cron delivery
+            webhook_server = None
+            if config.webhook_port > 0:
+                agent_voices = {a.name: a.voice for a in router.agents}
+                webhook_server = WebhookServer(
+                    notification_queue, agent_voices, config.webhook_port,
+                )
+                try:
+                    await webhook_server.start()
+                except OSError:
+                    logger.warning(
+                        "Webhook server failed to bind on port %d -- "
+                        "scheduled delivery unavailable",
+                        config.webhook_port,
+                    )
+                    webhook_server = None
 
-                def on_quit():
-                    logger.info("Quit requested from tray")
-                    loop.call_soon_threadsafe(loop.stop)
+            try:
+                with pipeline_cls(config) as pipeline:
+                    # Toggle callback (called from hotkey thread)
+                    def on_toggle():
+                        nonlocal active
+                        active = not active
+                        if active:
+                            pipeline.resume()
+                            logger.info("Dispatch resumed")
+                            if tray_icon:
+                                tray_icon.icon = _make_icon("green")
+                        else:
+                            pipeline.pause()
+                            logger.info("Dispatch paused")
+                            if tray_icon:
+                                tray_icon.icon = _make_icon("gray")
 
-                tray_icon = start_tray(pipeline, on_toggle, on_quit)
-                start_hotkey(config.hotkey, lambda: loop.call_soon_threadsafe(on_toggle))
+                    def on_quit():
+                        logger.info("Quit requested from tray")
+                        loop.call_soon_threadsafe(loop.stop)
 
-                logger.info("Dispatch ready -- listening for wake words")
+                    tray_icon = start_tray(pipeline, on_toggle, on_quit)
+                    start_hotkey(config.hotkey, lambda: loop.call_soon_threadsafe(on_toggle))
 
-                while True:
-                    # 1. Drain notification queue (non-blocking)
-                    while not notification_queue.empty():
+                    logger.info("Dispatch ready -- listening for wake words")
+
+                    while True:
+                        # 1. Drain notification queue (non-blocking)
+                        while not notification_queue.empty():
+                            try:
+                                notif = notification_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                            pipeline.pause()
+                            await speak(f"{notif.agent_name} says: {notif.text}", notif.agent_voice)
+                            pipeline.resume()
+
+                        # 2. Listen for wake words (2s timeout so notifications get checked)
+                        if not active:
+                            await asyncio.sleep(0.5)
+                            continue
+
+                        keyword_index = await pipeline.listen(timeout=2.0)
+                        if keyword_index is None:
+                            continue
+
+                        agent = router.route(keyword_index)
+                        logger.info("Routing to agent '%s'", agent.name)
+
+                        # 3. Transcribe speech
+                        transcript = await transcribe_fn(pipeline.frame_queue)
+                        pipeline.set_state(PipelineState.LISTENING)
+
+                        if not transcript:
+                            logger.info("Empty transcript, returning to listening")
+                            continue
+
+                        logger.info("Transcript: %s", transcript)
+
+                        # 4. Send to agent
                         try:
-                            notif = notification_queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
+                            response = await agent.send(transcript)
+                        except AgentError:
+                            logger.error("Agent '%s' failed", agent.name, exc_info=True)
+                            response = f"{agent.name} is not responding"
+
+                        # 5. Speak response
                         pipeline.pause()
-                        await speak(f"{notif.agent_name} says: {notif.text}", notif.agent_voice)
+                        await speak(response, agent.voice)
                         pipeline.resume()
-
-                    # 2. Listen for wake words (2s timeout so notifications get checked)
-                    if not active:
-                        await asyncio.sleep(0.5)
-                        continue
-
-                    keyword_index = await pipeline.listen(timeout=2.0)
-                    if keyword_index is None:
-                        continue
-
-                    agent = router.route(keyword_index)
-                    logger.info("Routing to agent '%s'", agent.name)
-
-                    # 3. Transcribe speech
-                    transcript = await transcribe_fn(pipeline.frame_queue)
-                    pipeline.set_state(PipelineState.LISTENING)
-
-                    if not transcript:
-                        logger.info("Empty transcript, returning to listening")
-                        continue
-
-                    logger.info("Transcript: %s", transcript)
-
-                    # 4. Send to agent
-                    try:
-                        response = await agent.send(transcript)
-                    except AgentError:
-                        logger.error("Agent '%s' failed", agent.name, exc_info=True)
-                        response = f"{agent.name} is not responding"
-
-                    # 5. Speak response
-                    pipeline.pause()
-                    await speak(response, agent.voice)
-                    pipeline.resume()
+            finally:
+                if webhook_server:
+                    await webhook_server.stop()
 
     try:
         asyncio.run(run())

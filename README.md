@@ -87,19 +87,22 @@ flowchart LR
 
 Agents can also **push proactive messages** to Dispatch via a second node WebSocket connection. Dispatch registers as a voice-capable device, so the agent can invoke `voice.speak` at any time. Urgent alerts interrupt idle listening; normal messages queue up and play sequentially.
 
+A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accepts scheduled notifications from cron jobs. This is opt-in: only cron jobs explicitly configured to target Dispatch will deliver to it.
+
 ## Features
 
 - **Multi-agent routing**: different wake words route to different AI backends. Adding an agent is a config entry + one Python file.
 - **Voice in, voice out**: full voice pipeline from wake word to spoken response. No typing required in live mode.
 - **Always-on wake word**: Picovoice Porcupine runs entirely on-device (~1% CPU). No cloud calls until you speak.
 - **Proactive voice push**: agents deliver unsolicited messages via a node WebSocket connection with `voice` capability. The gateway invokes `voice.speak` and Dispatch plays it through TTS. Priority queue with urgent/normal levels.
+- **Webhook endpoint for scheduled delivery**: localhost-only `POST /notify` endpoint receives notifications from external sources like cron jobs. Opt-in per cron job -- only reminders explicitly targeting Dispatch are delivered. Optional Bearer token auth.
 - **Per-agent voices**: each agent gets its own Edge TTS voice for instant recognition.
 - **Debug mode**: keyboard-driven fallback (`--debug`) for the entire pipeline. Test everything without hardware or cloud accounts.
 - **No audio on disk**: mic frames processed in-place, TTS output stays in BytesIO. Nothing saved.
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 60 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
+- **Fully tested**: 77 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
 
 ## Prerequisites
 
@@ -285,8 +288,9 @@ python -m dispatch                  # Live mode
 | Agent routing | Complete | Type registry, config-driven |
 | OpenClaw agent | Complete | Dual WebSocket (operator chat + node voice push), Ed25519 device auth, streaming chat |
 | Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
+| Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
-| Test suite | Complete | 60 tests, full offline coverage |
+| Test suite | Complete | 77 tests, full offline coverage |
 | Wake word (live) | Waiting | Picovoice account approval pending |
 | Google STT (live) | Ready | API enabled, service account key needed |
 

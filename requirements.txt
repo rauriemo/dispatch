@@ -11,3 +11,4 @@ python-dotenv
 cryptography
 pystray
 Pillow
+aiohttp
