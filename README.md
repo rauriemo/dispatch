@@ -64,6 +64,7 @@ flowchart LR
 
   subgraph agents ["Agent Backends"]
     Navi["OpenClawAgent\n(hey navi)"]
+    Anthem["AnthemAgent\n(hey anthem)"]
     Future["FutureAgent\n(hey jarvis, etc.)"]
   end
 
@@ -71,8 +72,10 @@ flowchart LR
   Mic -->|"audio frames"| Pipeline
   Pipeline -->|"wake word fires"| STT
   STT -->|"transcript"| Navi
+  STT -.->|"transcript"| Anthem
   STT -.->|"transcript"| Future
   Navi -->|"response"| TTS
+  Anthem -.->|"response"| TTS
   Future -.->|"response"| TTS
   TTS -->|"audio"| Speaker
   Navi -.->|"push notification"| Tray
@@ -213,6 +216,7 @@ The `settings` block configures the system. Each agent entry specifies:
 ```bash
 PICOVOICE_ACCESS_KEY=your-picovoice-access-key
 OPENCLAW_TOKEN=your-openclaw-gateway-token
+ANTHEM_TOKEN=your-anthem-shared-secret  # shared with Anthem's channels.yaml
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 OPENAI_API_KEY=sk-...                 # optional, for openai/ TTS voices
 ELEVENLABS_API_KEY=...                # optional, for elevenlabs/ TTS voices
@@ -301,7 +305,8 @@ Voices use a provider prefix format. Supported providers:
 
 | Agent | Primary Voice | Fallback Voice |
 |---|---|---|
-| Navi (OpenClaw) | `openai/nova` | `en-US-AvaMultilingualNeural` |
+| Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` |
+| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` |
 
 If the primary provider fails (missing key, rate limit), each sentence automatically falls back to the Edge TTS voice. Run `edge-tts --list-voices` for the full free voice catalog.
 
@@ -325,11 +330,12 @@ python -m dispatch                  # Live mode
 | TTS playback | Complete | Multi-provider (OpenAI, ElevenLabs, Google Cloud, Edge), pipelined sentence-by-sentence, auto-fallback |
 | Agent routing | Complete | Type registry, config-driven |
 | OpenClaw agent | Complete | Dual WebSocket (operator chat + node voice push), Ed25519 device auth, streaming chat |
+| Anthem agent | Ready | WebSocket chat + event notifications. Anthem-side channel adapter pending. |
 | Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
 | STT wake fallback | Complete | Google STT-based wake detection, single-utterance support |
-| Test suite | Complete | 131 tests, full offline coverage |
+| Test suite | Complete | 159 tests, full offline coverage |
 | Wake word (live, Picovoice) | Waiting | Picovoice account approval pending |
 | Wake word (live, STT) | Ready | Uses Google Cloud STT, works with just GOOGLE_APPLICATION_CREDENTIALS |
 | Google STT (live) | Ready | API enabled, service account key needed |

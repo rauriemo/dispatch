@@ -47,7 +47,7 @@ A background thread runs pvrecorder (no access key needed) + Google STT in a con
 
 ### AgentRouter
 
-Maps wake-word keyword indices to agent instances. A type registry (`{"openclaw": OpenClawAgent, ...}`) instantiates agents from `agents.yaml` config. Async context manager -- `__aenter__` connects all agents, `__aexit__` disconnects them. If an agent fails to connect at startup, it logs a warning and continues degraded.
+Maps wake-word keyword indices to agent instances. A type registry (`{"openclaw": OpenClawAgent, "anthem": AnthemAgent, ...}`) instantiates agents from `agents.yaml` config. Async context manager -- `__aenter__` connects all agents, `__aexit__` disconnects them. If an agent fails to connect at startup, it logs a warning and continues degraded.
 
 ### Dual-connection architecture (OpenClaw)
 
@@ -121,11 +121,12 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/notifications.py` | `Notification` dataclass, `NotificationQueue` (asyncio.PriorityQueue wrapper) |
 | `dispatch/agents/base.py` | `BaseAgent` ABC, `AgentError`, `AgentRouter` (type registry + routing) |
 | `dispatch/agents/openclaw.py` | `OpenClawAgent` -- dual WebSocket (operator chat + node voice), auto-reconnect |
+| `dispatch/agents/anthem.py` | `AnthemAgent` -- single WebSocket to Anthem orchestrator, token auth, event notifications |
 | `dispatch/crypto.py` | Ed25519 device identity for OpenClaw gateway handshake |
 | `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
 | `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice (provider prefix), fallback voice |
-| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
+| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `ANTHEM_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
 
@@ -331,6 +332,47 @@ Only reminders the user explicitly requests for voice delivery should target thi
 
 The agent should recognize delivery intent keywords ("on Dispatch", "voice reminder", "speak it") and only configure the webhook URL for those cron jobs. Normal reminders without Dispatch mention should not target the webhook.
 
+## Anthem API contract
+
+### WebSocket protocol (dispatch channel adapter)
+
+Anthem is a hybrid orchestrator for Claude Code (https://github.com/rauriemo/anthem). Dispatch connects to Anthem's dispatch channel adapter via a single WebSocket with a simple JSON text frame protocol.
+
+**Auth on connect:**
+1. Client connects to `ws://<endpoint>` (configured as `endpoint` in agents.yaml)
+2. Client sends: `{"type":"auth","token":"<bearer>","client":"dispatch"}`
+3. Server responds: `{"type":"auth_ok"}` or `{"type":"auth_fail","error":"..."}`
+
+**Sending a message (after auth):**
+```json
+{"type":"req","id":"<uuid>","text":"deploy the staging branch"}
+```
+
+**Receiving the orchestrator's reply (correlated by id):**
+```json
+{"type":"res","id":"<uuid>","text":"I'll dispatch that right away. Creating issue GH-43."}
+```
+
+If the orchestrator encounters an error:
+```json
+{"type":"res","id":"<uuid>","error":"orchestrator unavailable"}
+```
+
+**Event push (server-initiated, no correlation):**
+```json
+{"type":"event","event":"task.completed","text":"Task GH-42: Add CONTRIBUTING.md completed ($0.058)"}
+```
+
+Events become voice notifications. Priority mapping: `task.failed` and `maintenance.suggested` are urgent (priority 0), all others are normal (priority 1).
+
+**Supported event types:** `task.completed`, `task.failed`, `wave.completed`, `task.waiting_approval`, `task.budget_exceeded`, `orchestrator.stopped`, `maintenance.suggested`.
+
+**Send timeout:** 120s (longer than OpenClaw's 60s because the orchestrator may consult Claude before replying).
+
+**Auto-reconnect:** exponential backoff 1-30s, re-authenticates on reconnect.
+
+**Anthem-side adapter:** requires a Go channel adapter in `internal/channel/dispatch/` implementing Anthem's `Channel` interface (Kind/Start/Send/Incoming/Close). Not yet implemented -- see the protocol spec for implementation guidance.
+
 ## Wake word constraints
 
 - Picovoice recommends 6+ phonemes for reliable detection with minimal false positives
@@ -355,7 +397,8 @@ Each agent specifies `voice` (primary, may be paid) and `fallback_voice` (free E
 
 | Agent | Primary Voice | Fallback | Character |
 |---|---|---|---|
-| Navi (OpenClaw) | `openai/nova` | `en-US-AvaMultilingualNeural` | Friendly, natural female |
+| Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` | Warm, expressive female |
+| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` | Same voice, task management |
 
 Full Edge TTS catalog: `edge-tts --list-voices`. Swap any voice by editing `agents.yaml`.
 

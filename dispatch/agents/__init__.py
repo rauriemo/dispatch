@@ -3,6 +3,7 @@
 from dispatch.agents.base import AgentError, AgentRouter, BaseAgent
 
 # Import to trigger registration
+import dispatch.agents.anthem  # noqa: F401
 import dispatch.agents.openclaw  # noqa: F401
 
 __all__ = ["AgentError", "AgentRouter", "BaseAgent"]
