@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 _SENTENCE_RE = re.compile(r'(?<=[.!?…])\s+|(?<=\n)\s*')
 
+_warned_providers: set[str] = set()
+
 
 # -- Text cleaning / splitting ------------------------------------------------
 
@@ -173,11 +175,14 @@ async def _synthesize(
         buf = await synth_fn(text, voice_name)
         if buf is not None:
             return buf
-    except Exception:
-        logger.warning(
-            "TTS provider '%s' failed, falling back to Edge TTS",
-            provider, exc_info=True,
-        )
+    except (ModuleNotFoundError, RuntimeError) as exc:
+        if provider not in _warned_providers:
+            _warned_providers.add(provider)
+            logger.warning("TTS provider '%s' unavailable: %s -- using Edge TTS", provider, exc)
+    except Exception as exc:
+        if provider not in _warned_providers:
+            _warned_providers.add(provider)
+            logger.warning("TTS provider '%s' failed: %s -- using Edge TTS", provider, exc)
 
     _, fb_name = parse_voice(fallback_voice) if fallback_voice else ("edge", voice_name)
     return await _synthesize_edge(text, fb_name)

@@ -6,7 +6,13 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
+import dispatch.tts
 from dispatch.tts import speak, parse_voice, _clean_for_speech, _split_sentences
+
+
+@pytest.fixture(autouse=True)
+def _clear_warned_providers():
+    dispatch.tts._warned_providers.clear()
 
 
 # -- Voice parsing -------------------------------------------------------------

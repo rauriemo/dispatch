@@ -10,5 +10,5 @@ agents:
     wake_word: assets/hey-navi.ppn
     endpoint: http://localhost:18789
     token_env: OPENCLAW_TOKEN
-    voice: openai/nova
+    voice: google/en-US-Chirp3-HD-Erinome
     fallback_voice: en-US-AvaMultilingualNeural
