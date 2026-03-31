@@ -39,7 +39,7 @@ Press Enter for wake word>
 Say something> hello, what can you do?
 [INFO] Transcript: hello, what can you do?
 [INFO] Navi responded (247 chars)
-[INFO] Speaking response with voice en-US-GuyNeural
+[INFO] Speaking response with voice en-US-AvaMultilingualNeural
 ```
 
 Press `Ctrl+C` to stop. Dispatch disconnects all agents, releases audio resources, and exits cleanly.
@@ -81,21 +81,21 @@ flowchart LR
 5. **Response spoken aloud** -- Edge TTS generates audio in-memory, played through speakers
 6. **Back to listening** -- ready for the next wake word
 
-Agents can also **push notifications** to Dispatch via WebSocket. Urgent alerts interrupt idle listening; normal messages queue up and play sequentially.
+Agents can also **push proactive messages** to Dispatch via a second node WebSocket connection. Dispatch registers as a voice-capable device, so the agent can invoke `voice.speak` at any time. Urgent alerts interrupt idle listening; normal messages queue up and play sequentially.
 
 ## Features
 
 - **Multi-agent routing**: different wake words route to different AI backends. Adding an agent is a config entry + one Python file.
 - **Voice in, voice out**: full voice pipeline from wake word to spoken response. No typing required in live mode.
 - **Always-on wake word**: Picovoice Porcupine runs entirely on-device (~1% CPU). No cloud calls until you speak.
-- **Push notifications**: agents proactively send messages via WebSocket. Priority queue with urgent/normal levels.
+- **Proactive voice push**: agents deliver unsolicited messages via a node WebSocket connection with `voice` capability. The gateway invokes `voice.speak` and Dispatch plays it through TTS. Priority queue with urgent/normal levels.
 - **Per-agent voices**: each agent gets its own Edge TTS voice for instant recognition.
 - **Debug mode**: keyboard-driven fallback (`--debug`) for the entire pipeline. Test everything without hardware or cloud accounts.
 - **No audio on disk**: mic frames processed in-place, TTS output stays in BytesIO. Nothing saved.
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 52 tests covering config, routing, WebSocket gateway protocol, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
+- **Fully tested**: 60 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
 
 ## Prerequisites
 
@@ -132,7 +132,7 @@ python -m dispatch
 
 ### First-Run Device Pairing
 
-On first connect, OpenClaw requires device approval. Dispatch generates an Ed25519 keypair (stored in `.dispatch_device_key`) and the gateway returns a pairing request. Approve it on the gateway host:
+On first connect, OpenClaw requires device approval. Dispatch generates an Ed25519 keypair (stored in `.dispatch_device_key`) and the gateway returns a pairing request. You'll need to approve **twice** -- once for the operator role (chat) and once for the node role (voice push):
 
 ```bash
 openclaw devices approve <requestId>
@@ -140,7 +140,7 @@ openclaw devices approve <requestId>
 docker exec -it <container> openclaw devices approve <requestId>
 ```
 
-The request ID is logged in Dispatch's output. After approval the device is trusted for all future connects.
+The request IDs are logged in Dispatch's output. After both approvals, the device is trusted for all future connects.
 
 ## Configuration Reference
 
@@ -241,7 +241,7 @@ One `pvrecorder` instance captures mic frames in a background thread. In LISTENI
 
 | Thread | Runs | Communicates via |
 |---|---|---|
-| Main (asyncio) | Event loop, agent WS send/recv, TTS, notification drain | -- |
+| Main (asyncio) | Event loop, operator WS send/recv, node WS recv, TTS, notification drain | -- |
 | Capture | `pvrecorder.read()` loop, Porcupine processing | `loop.call_soon_threadsafe()` |
 | STT | `streaming_recognize()` (blocking gRPC) | `queue.Queue` (stdlib) |
 | Hotkey | `pynput.GlobalHotKeys` (daemon) | `loop.call_soon_threadsafe()` |
@@ -279,10 +279,10 @@ python -m dispatch                  # Live mode
 | Google Cloud STT streaming | Complete | Blocking gRPC in thread, debug fallback |
 | Edge TTS playback | Complete | In-memory BytesIO, per-agent voice |
 | Agent routing | Complete | Type registry, config-driven |
-| OpenClaw agent | Complete | WebSocket gateway, Ed25519 device auth, streaming chat |
-| Push notifications | Complete | Same WebSocket connection, priority queue |
+| OpenClaw agent | Complete | Dual WebSocket (operator chat + node voice push), Ed25519 device auth, streaming chat |
+| Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
-| Test suite | Complete | 52 tests, full offline coverage |
+| Test suite | Complete | 60 tests, full offline coverage |
 | Wake word (live) | Waiting | Picovoice account approval pending |
 | Google STT (live) | Ready | API enabled, service account key needed |
 
