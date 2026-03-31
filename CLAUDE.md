@@ -4,6 +4,18 @@ Modular voice-first command channel for AI agents. Listens for wake words via Pi
 
 ## Architecture
 
+### Pipeline selection (three-tier)
+
+Dispatch selects its audio pipeline automatically based on available credentials:
+
+```
+PICOVOICE_ACCESS_KEY set?         -> AudioPipeline (Porcupine, local, fast)
+No Picovoice, GOOGLE_APPLICATION_CREDENTIALS set? -> STTWakePipeline (Google STT, cloud)
+Neither, or --debug flag          -> DebugPipeline (keyboard input)
+```
+
+All three pipelines expose the same interface (`listen()`, `set_state()`, `pause()`, `resume()`, context manager, `frame_queue`) so `main.py` never branches on pipeline type.
+
 ### AudioPipeline state machine
 
 A single `pvrecorder` instance captures mic frames in a background thread. Frames are routed by state:
@@ -15,6 +27,23 @@ PAUSED     -- frames discarded (TTS playing, or system toggled off)
 ```
 
 Transitions: LISTENING->RECORDING on wake word detection, RECORDING->LISTENING when STT returns, any->PAUSED on toggle off or TTS start, PAUSED->LISTENING on toggle on or TTS end.
+
+### STTWakePipeline (Google STT fallback)
+
+When Picovoice is unavailable but Google Cloud credentials exist, `STTWakePipeline` provides voice-based wake word detection using Google Cloud STT. Same state machine as `AudioPipeline` but replaces Porcupine with continuous STT transcription and text matching.
+
+A background thread runs pvrecorder (no access key needed) + Google STT in a loop:
+- In LISTENING state: frames stream to `streaming_recognize(single_utterance=True)`. Each stream captures one spoken phrase, then the transcript is checked against registered wake phrases.
+- If matched: chime plays, `keyword_index` and optional `pending_command` are stored, state transitions to RECORDING, async wake event fires.
+- If no match: loop starts a new STT stream immediately.
+- In RECORDING state: frames go to `frame_queue` for command transcription.
+- In PAUSED state: frames discarded.
+
+**Single-utterance support:** "Hey navi, what's the weather?" is handled in one shot. The wake phrase is matched and the command text after it is extracted into `pending_command`. The main loop checks `pending_command` before calling the transcribe function -- if present, it skips the second STT call entirely.
+
+**Wake phrase matching:** case-insensitive, strips punctuation between phrase and command. Phrases are configured via `wake_phrase` in `agents.yaml` (auto-derived from .ppn filename if omitted).
+
+**Cost:** Google STT streams continuously while LISTENING (~$0.006/15s). Toggle Dispatch off when not in use.
 
 ### AgentRouter
 
@@ -65,8 +94,9 @@ Main thread        asyncio event loop (main.py run())
                    ├── webhook server (aiohttp on 127.0.0.1, POST /notify)
                    └── notification drain loop
 
-Capture thread     threading.Thread (AudioPipeline._capture_loop)
+Capture thread     threading.Thread (AudioPipeline._capture_loop or STTWakePipeline._stt_watch_loop)
                    └── pvrecorder.read() in tight loop, routes frames by state
+                   └── (STTWake) also runs streaming_recognize() in the same thread
 
 STT thread         asyncio.to_thread(_blocking_transcribe)
                    └── google.cloud.speech streaming_recognize() (blocking gRPC)
@@ -84,17 +114,17 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | File | Owns |
 |---|---|
 | `dispatch/main.py` | Hotkey toggle, system tray, main voice-command loop, shutdown |
-| `dispatch/audio.py` | `AudioPipeline` (pvrecorder + Porcupine state machine), `DebugPipeline`, chime generation |
+| `dispatch/audio.py` | `AudioPipeline` (pvrecorder + Porcupine), `STTWakePipeline` (pvrecorder + Google STT), `DebugPipeline`, chime generation |
 | `dispatch/stt.py` | `stream_transcribe` (Google Cloud STT streaming), `debug_transcribe` (typed input) |
 | `dispatch/tts.py` | `speak()` -- edge-tts to BytesIO, pygame playback |
-| `dispatch/config.py` | `DispatchConfig`/`AgentConfig` dataclasses, YAML + .env loading, validation |
+| `dispatch/config.py` | `DispatchConfig`/`AgentConfig` dataclasses, YAML + .env loading, validation, wake phrase derivation |
 | `dispatch/notifications.py` | `Notification` dataclass, `NotificationQueue` (asyncio.PriorityQueue wrapper) |
 | `dispatch/agents/base.py` | `BaseAgent` ABC, `AgentError`, `AgentRouter` (type registry + routing) |
 | `dispatch/agents/openclaw.py` | `OpenClawAgent` -- dual WebSocket (operator chat + node voice), auto-reconnect |
 | `dispatch/crypto.py` | Ed25519 device identity for OpenClaw gateway handshake |
 | `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
-| `agents.yaml` | Agent registry: type, wake word path, endpoint, token env var, TTS voice |
+| `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice |
 | `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
@@ -103,8 +133,11 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 # Debug mode -- keyboard input, no cloud/hardware deps needed
 python -m dispatch --debug
 
-# Live mode -- requires .env with PICOVOICE_ACCESS_KEY, OPENCLAW_TOKEN,
-# GOOGLE_APPLICATION_CREDENTIALS, and a .ppn wake word file in assets/
+# Live mode (Picovoice) -- best wake word detection, requires PICOVOICE_ACCESS_KEY
+python -m dispatch
+
+# Live mode (STT wake) -- no Picovoice key needed, uses Google STT for wake detection
+# Just set GOOGLE_APPLICATION_CREDENTIALS (no PICOVOICE_ACCESS_KEY)
 python -m dispatch
 ```
 
@@ -120,7 +153,9 @@ Install deps first: `pip install -r requirements.txt`
 - **pygame mixer init**: `frequency=44100, size=-16, channels=2, buffer=2048`. Stereo (channels=2) because edge-tts MP3 may be stereo.
 - **Hotkey format**: pynput requires angle brackets: `<ctrl>+<shift>+n`. Stored in this exact format in `agents.yaml`. Malformed strings are silently ignored.
 - **Chime**: 150ms 880Hz sine wave via `array.array('h')` + `math.sin()`, loaded as `pygame.mixer.Sound(buffer=...)`. No numpy.
-- **Context managers**: `AgentRouter` (async with), `AudioPipeline`/`DebugPipeline` (with), `httpx.AsyncClient` -- guaranteed cleanup.
+- **STTWakePipeline**: uses Google STT `streaming_recognize(single_utterance=True)` for wake phrase detection. Runs pvrecorder + STT in one thread. `pending_command` holds the extracted command from single-utterance detection -- main loop checks it before calling `transcribe_fn`. Exponential backoff (1-30s) on STT stream errors.
+- **Wake phrase config**: `AgentConfig.wake_phrase` is auto-derived from the `.ppn` filename (`assets/hey-navi.ppn` -> `"hey navi"`). Explicit override via `wake_phrase:` in `agents.yaml`. Platform suffixes (`_en_windows`, etc.) are stripped during derivation.
+- **Context managers**: `AgentRouter` (async with), `AudioPipeline`/`STTWakePipeline`/`DebugPipeline` (with), `httpx.AsyncClient` -- guaranteed cleanup.
 - **WebSocket auto-reconnect**: both `_recv_loop` (operator) and `_node_recv_loop` (node) reconnect independently with exponential backoff (1–30s) on disconnect, re-handshake, and resume frame processing.
 - **Unrequested events**: `chat` events with `state: "final"` whose `runId` doesn't match a pending request are treated as proactive push messages and routed to the notification queue.
 - **Webhook server**: `aiohttp.web` on `127.0.0.1` only (never `0.0.0.0`). Disabled when `webhook_port` is 0. Auth is optional (`DISPATCH_WEBHOOK_SECRET` env var). The agent-name-to-voice lookup dict is built from the `AgentRouter`'s agent list at startup.
@@ -358,6 +393,7 @@ agents:
   myagentname:
     type: myagent
     wake_word: assets/hey-myagent.ppn
+    # wake_phrase: hey myagent  (auto-derived from wake_word if omitted)
     endpoint: http://localhost:9999
     token_env: MYAGENT_TOKEN
     voice: en-US-AriaNeural

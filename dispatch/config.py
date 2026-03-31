@@ -13,6 +13,18 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _derive_wake_phrase(wake_word_path: str) -> str:
+    """Derive a text wake phrase from a .ppn filename.
+
+    'assets/hey-navi.ppn' -> 'hey navi'
+    """
+    stem = Path(wake_word_path).stem
+    # Strip platform suffixes like '_en_windows'
+    for suffix in ("_en_windows", "_en_mac", "_en_linux", "_en_raspberry-pi"):
+        stem = stem.removesuffix(suffix)
+    return stem.replace("-", " ").replace("_", " ").lower()
+
+
 @dataclass
 class AgentConfig:
     name: str
@@ -21,6 +33,7 @@ class AgentConfig:
     endpoint: str
     token_env: str
     voice: str
+    wake_phrase: str = ""
 
 
 @dataclass
@@ -52,13 +65,16 @@ def load_config(debug: bool = False) -> DispatchConfig:
     agents_raw = raw.get("agents", {})
     agents: list[AgentConfig] = []
     for name, cfg in agents_raw.items():
+        wake_word = cfg["wake_word"]
+        wake_phrase = cfg.get("wake_phrase", "") or _derive_wake_phrase(wake_word)
         agents.append(AgentConfig(
             name=name,
             type=cfg["type"],
-            wake_word=cfg["wake_word"],
+            wake_word=wake_word,
             endpoint=cfg["endpoint"],
             token_env=cfg["token_env"],
             voice=cfg["voice"],
+            wake_phrase=wake_phrase,
         ))
 
     webhook_port = settings.get("webhook_port", 0)
@@ -109,9 +125,14 @@ def _validate(config: DispatchConfig) -> None:
 
     if not config.debug:
         if not os.environ.get("PICOVOICE_ACCESS_KEY"):
-            logger.warning(
-                "PICOVOICE_ACCESS_KEY not set -- will fall back to debug pipeline"
-            )
+            if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+                logger.warning(
+                    "PICOVOICE_ACCESS_KEY not set -- will use STT-based wake word detection"
+                )
+            else:
+                logger.warning(
+                    "PICOVOICE_ACCESS_KEY not set -- will fall back to debug pipeline"
+                )
         if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
             logger.warning(
                 "GOOGLE_APPLICATION_CREDENTIALS not set -- will fall back to debug STT"

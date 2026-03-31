@@ -93,30 +93,53 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 
 - **Multi-agent routing**: different wake words route to different AI backends. Adding an agent is a config entry + one Python file.
 - **Voice in, voice out**: full voice pipeline from wake word to spoken response. No typing required in live mode.
-- **Always-on wake word**: Picovoice Porcupine runs entirely on-device (~1% CPU). No cloud calls until you speak.
+- **Always-on wake word**: Picovoice Porcupine runs entirely on-device (~1% CPU). No cloud calls until you speak. Falls back to STT-based wake detection if Picovoice is unavailable.
 - **Proactive voice push**: agents deliver unsolicited messages via a node WebSocket connection with `voice` capability. The gateway invokes `voice.speak` and Dispatch plays it through TTS. Priority queue with urgent/normal levels.
 - **Webhook endpoint for scheduled delivery**: localhost-only `POST /notify` endpoint receives notifications from external sources like cron jobs. Opt-in per cron job -- only reminders explicitly targeting Dispatch are delivered. Optional Bearer token auth.
 - **Per-agent voices**: each agent gets its own Edge TTS voice for instant recognition.
+- **Three-tier pipeline fallback**: Picovoice (local, fast) -> STT-based wake detection (Google Cloud, voice-driven) -> keyboard input (debug). Dispatch picks the best available pipeline automatically based on credentials.
+- **Single-utterance wake**: with STT wake detection, say "hey navi, what's the weather" in one sentence -- the wake phrase and command are captured together, no second listen required.
 - **Debug mode**: keyboard-driven fallback (`--debug`) for the entire pipeline. Test everything without hardware or cloud accounts.
 - **No audio on disk**: mic frames processed in-place, TTS output stays in BytesIO. Nothing saved.
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 77 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, audio conversion, TTS, notifications, and end-to-end debug flow. All offline, under 5 seconds.
+- **Fully tested**: 104 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, audio conversion, TTS, notifications, webhook, and end-to-end debug flow. All offline, under 6 seconds.
 
 ## Prerequisites
 
 | Dependency | Required for | Debug mode? |
 |---|---|---|
 | Python 3.11+ | Everything | Yes |
-| [Picovoice account](https://console.picovoice.ai) | Wake word detection | No -- keyboard fallback |
-| [Google Cloud STT](https://cloud.google.com/speech-to-text) | Speech-to-text | No -- typed input fallback |
+| [Picovoice account](https://console.picovoice.ai) | Wake word detection (tier 1, local) | No -- STT wake or keyboard fallback |
+| [Google Cloud STT](https://cloud.google.com/speech-to-text) | Speech-to-text + wake detection (tier 2) | No -- typed input fallback |
 | IAP tunnel to OpenClaw VM | Navi agent (WebSocket gateway) | No -- agent fails gracefully |
 | Edge TTS | Voice responses | Yes (free, no account) |
 
 ## Going Live
 
-After debug mode works, switch to real voice input:
+After debug mode works, switch to real voice input. You have two options:
+
+### Option A: STT-based wake detection (no Picovoice needed)
+
+If you don't have a Picovoice key yet, Dispatch uses Google Cloud STT for wake phrase detection:
+
+```bash
+# 1. Set up credentials in .env
+#   OPENCLAW_TOKEN=your-gateway-token
+#   GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
+# (omit PICOVOICE_ACCESS_KEY -- STT wake mode is selected automatically)
+
+# 2. Start the IAP tunnel to your OpenClaw VM (separate terminal)
+gcloud compute start-iap-tunnel openclaw-vm 18789 --local-host-port=localhost:18789 --zone=southamerica-east1-a
+
+# 3. Run -- STT wake is selected automatically
+python -m dispatch
+```
+
+STT wake supports single-utterance: "hey navi, what's the weather" captures wake phrase + command together. Note: STT streams continuously while listening (~$0.006/15s). Toggle Dispatch off when not in use.
+
+### Option B: Picovoice Porcupine (local, fastest)
 
 ```bash
 # 1. Set up credentials in .env (copy from .env.example)
@@ -174,6 +197,7 @@ The `settings` block configures the system. Each agent entry specifies:
 |---|---|
 | `type` | Agent class to instantiate (matches the type registry) |
 | `wake_word` | Path to Picovoice `.ppn` model file |
+| `wake_phrase` | Text wake phrase for STT detection (auto-derived from `.ppn` filename if omitted) |
 | `endpoint` | Agent API URL |
 | `token_env` | Name of the env var holding the auth token |
 | `voice` | Edge TTS voice ID for this agent's responses |
@@ -242,7 +266,7 @@ stateDiagram-v2
   P --> L: toggle on / TTS ends
 ```
 
-One `pvrecorder` instance captures mic frames in a background thread. In LISTENING state, frames go to Porcupine for wake word detection. In RECORDING state, frames go to a `queue.Queue` consumed by Google Cloud STT. In PAUSED state, frames are discarded.
+One `pvrecorder` instance captures mic frames in a background thread. In LISTENING state, frames go to Porcupine for wake word detection (or to Google STT for text-based matching in STT wake mode). In RECORDING state, frames go to a `queue.Queue` consumed by Google Cloud STT. In PAUSED state, frames are discarded.
 
 **Threading model:**
 
@@ -290,8 +314,10 @@ python -m dispatch                  # Live mode
 | Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
-| Test suite | Complete | 77 tests, full offline coverage |
-| Wake word (live) | Waiting | Picovoice account approval pending |
+| STT wake fallback | Complete | Google STT-based wake detection, single-utterance support |
+| Test suite | Complete | 104 tests, full offline coverage |
+| Wake word (live, Picovoice) | Waiting | Picovoice account approval pending |
+| Wake word (live, STT) | Ready | Uses Google Cloud STT, works with just GOOGLE_APPLICATION_CREDENTIALS |
 | Google STT (live) | Ready | API enabled, service account key needed |
 
 ## Contributing

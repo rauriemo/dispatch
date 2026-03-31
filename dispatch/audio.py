@@ -6,7 +6,9 @@ import enum
 import logging
 import math
 import queue
+import struct
 import threading
+import time
 from typing import Optional
 
 import pygame
@@ -140,6 +142,222 @@ class AudioPipeline:
 
     def __enter__(self) -> "AudioPipeline":
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.stop()
+
+
+_STT_FRAME_LENGTH = 512
+
+
+class STTWakePipeline:
+    """Voice-based wake word detection using Google Cloud STT.
+
+    Middle tier between AudioPipeline (Picovoice, local) and DebugPipeline
+    (keyboard). Uses pvrecorder for mic capture and Google STT to transcribe
+    speech, then matches wake phrases in the transcript text.
+
+    Supports single-utterance: "hey navi what's the weather" returns the
+    keyword index AND stores the command portion in pending_command so the
+    main loop can skip a second STT call.
+    """
+
+    def __init__(self, config, wake_phrases: list[tuple[str, int]]) -> None:
+        import pvrecorder as _pvrecorder
+
+        self._recorder = _pvrecorder.PvRecorder(
+            frame_length=_STT_FRAME_LENGTH,
+            device_index=config.audio_device,
+        )
+        self._wake_phrases = wake_phrases
+        self.frame_queue: queue.Queue = queue.Queue()
+        self.pending_command: Optional[str] = None
+        self._state = PipelineState.LISTENING
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._wake_event: Optional[asyncio.Event] = None
+        self._keyword_index: int = -1
+        self._thread: Optional[threading.Thread] = None
+        self._chime = _generate_chime()
+
+    # -- wake phrase matching --------------------------------------------------
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        """Strip punctuation and smart quotes so 'na\u2019vi' matches 'navi'."""
+        import re
+        text = text.replace("\u2019", "").replace("\u2018", "")
+        text = text.replace("'", "").replace("\u2032", "")
+        text = re.sub(r"[^\w\s]", " ", text)
+        return " ".join(text.lower().split())
+
+    def _match_wake_phrase(self, transcript: str) -> tuple[Optional[int], Optional[str]]:
+        """Check transcript for a wake phrase. Returns (index, command) or (None, None)."""
+        normalized = self._normalize(transcript)
+        for phrase, index in self._wake_phrases:
+            norm_phrase = self._normalize(phrase)
+            pos = normalized.find(norm_phrase)
+            if pos != -1:
+                after = normalized[pos + len(norm_phrase):].strip()
+                return (index, after if after else None)
+        return (None, None)
+
+    # -- background thread -----------------------------------------------------
+
+    def _stt_watch_loop(self) -> None:
+        """Background thread: capture audio, stream to Google STT, match wake phrases."""
+        try:
+            self._stt_watch_loop_inner()
+        except Exception:
+            logger.error("STT wake thread crashed", exc_info=True)
+
+    def _stt_watch_loop_inner(self) -> None:
+        from google.cloud import speech
+
+        self._recorder.start()
+        logger.info(
+            "STT wake pipeline started (device=%s, phrases=%s)",
+            self._recorder.selected_device,
+            [p for p, _ in self._wake_phrases],
+        )
+
+        backoff = 1
+        while not self._stop_event.is_set():
+            with self._lock:
+                state = self._state
+
+            if state == PipelineState.PAUSED:
+                self._recorder.read()
+                continue
+
+            if state == PipelineState.RECORDING:
+                frame = self._recorder.read()
+                self.frame_queue.put(frame)
+                continue
+
+            # LISTENING: run one STT stream looking for a wake phrase
+            try:
+                logger.debug("Starting STT wake stream...")
+                transcript = self._run_stt_stream()
+                backoff = 1
+            except Exception:
+                logger.warning("STT wake stream error, retrying in %ds", backoff, exc_info=True)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+
+            if not transcript:
+                logger.debug("STT wake stream ended with no speech")
+                continue
+
+            logger.debug("STT heard: '%s'", transcript)
+            keyword_index, command = self._match_wake_phrase(transcript)
+            if keyword_index is not None:
+                logger.info("Wake phrase detected: '%s' (index=%d)", transcript, keyword_index)
+                self._chime.play()
+                self._keyword_index = keyword_index
+                self.pending_command = command
+                with self._lock:
+                    self._state = PipelineState.RECORDING
+                if self._loop and self._wake_event:
+                    self._loop.call_soon_threadsafe(self._wake_event.set)
+
+        self._recorder.stop()
+
+    def _run_stt_stream(self) -> str:
+        """Run a single-utterance STT stream. Returns the final transcript or ''."""
+        from google.cloud import speech
+
+        client = speech.SpeechClient()
+        hint_phrases = [p for p, _ in self._wake_phrases]
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=SAMPLE_RATE,
+            language_code="en-US",
+            enable_automatic_punctuation=True,
+            speech_contexts=[speech.SpeechContext(
+                phrases=hint_phrases,
+                boost=20.0,
+            )],
+        )
+        streaming_config = speech.StreamingRecognitionConfig(
+            config=config,
+            single_utterance=True,
+            interim_results=True,
+        )
+
+        frames_sent = 0
+
+        def frame_generator():
+            nonlocal frames_sent
+            while not self._stop_event.is_set():
+                with self._lock:
+                    state = self._state
+                if state != PipelineState.LISTENING:
+                    return
+                try:
+                    frame = self._recorder.read()
+                except Exception:
+                    return
+                audio_bytes = struct.pack(f"<{len(frame)}h", *frame)
+                peak = max(abs(s) for s in frame)
+                frames_sent += 1
+                if frames_sent == 1:
+                    logger.debug("First audio frame sent to STT (%d bytes, peak=%d)", len(audio_bytes), peak)
+                elif frames_sent % 500 == 0:
+                    logger.debug("STT stream alive: %d frames sent (~%.0fs audio, peak=%d)", frames_sent, frames_sent * _STT_FRAME_LENGTH / SAMPLE_RATE, peak)
+                elif peak > 2000 and frames_sent % 50 == 0:
+                    logger.debug("Audio activity detected (peak=%d, frame=%d)", peak, frames_sent)
+                yield speech.StreamingRecognizeRequest(audio_content=audio_bytes)
+
+        responses = client.streaming_recognize(streaming_config, frame_generator())
+        for response in responses:
+            logger.debug("STT response: results=%d, speech_event=%s", len(response.results), response.speech_event_type)
+            for result in response.results:
+                if result.is_final:
+                    return result.alternatives[0].transcript
+                elif result.alternatives:
+                    logger.debug("STT interim: '%s'", result.alternatives[0].transcript)
+        return ""
+
+    # -- async interface (same as AudioPipeline) --------------------------------
+
+    async def listen(self, timeout: float = 2.0) -> Optional[int]:
+        """Await wake phrase detection. Returns keyword index or None on timeout."""
+        self._loop = asyncio.get_running_loop()
+        if self._wake_event is None:
+            self._wake_event = asyncio.Event()
+        self._wake_event.clear()
+
+        try:
+            await asyncio.wait_for(self._wake_event.wait(), timeout=timeout)
+            return self._keyword_index
+        except asyncio.TimeoutError:
+            return None
+
+    def set_state(self, state: PipelineState) -> None:
+        with self._lock:
+            old = self._state
+            self._state = state
+        logger.debug("STTWakePipeline state: %s -> %s", old.value, state.value)
+
+    def pause(self) -> None:
+        self.set_state(PipelineState.PAUSED)
+
+    def resume(self) -> None:
+        self.set_state(PipelineState.LISTENING)
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        logger.info("STT wake pipeline stopped")
+
+    def __enter__(self) -> "STTWakePipeline":
+        self._thread = threading.Thread(target=self._stt_watch_loop, daemon=True)
         self._thread.start()
         return self
 

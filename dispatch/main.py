@@ -9,7 +9,7 @@ import pygame
 from PIL import Image, ImageDraw
 from pynput.keyboard import GlobalHotKeys
 
-from dispatch.audio import AudioPipeline, DebugPipeline, PipelineState
+from dispatch.audio import AudioPipeline, DebugPipeline, STTWakePipeline, PipelineState
 from dispatch.config import DispatchConfig, load_config
 from dispatch.notifications import NotificationQueue
 from dispatch.stt import debug_transcribe, stream_transcribe
@@ -71,10 +71,22 @@ def main(debug: bool = False) -> None:
     # Init pygame mixer: stereo for edge-tts MP3
     pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
 
-    # Choose pipeline and transcribe function based on debug mode
-    use_debug = debug or not os.environ.get("PICOVOICE_ACCESS_KEY")
-    pipeline_cls = DebugPipeline if use_debug else AudioPipeline
-    transcribe_fn = debug_transcribe if (debug or not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")) else stream_transcribe
+    # Three-tier pipeline selection: Picovoice -> STT wake -> Debug (keyboard)
+    has_picovoice = bool(os.environ.get("PICOVOICE_ACCESS_KEY"))
+    has_google = bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
+
+    if debug:
+        pipeline_cls = DebugPipeline
+        transcribe_fn = debug_transcribe
+    elif has_picovoice:
+        pipeline_cls = AudioPipeline
+        transcribe_fn = stream_transcribe
+    elif has_google:
+        pipeline_cls = STTWakePipeline
+        transcribe_fn = stream_transcribe
+    else:
+        pipeline_cls = DebugPipeline
+        transcribe_fn = debug_transcribe
 
     async def run():
         loop = asyncio.get_running_loop()
@@ -104,7 +116,12 @@ def main(debug: bool = False) -> None:
                     webhook_server = None
 
             try:
-                with pipeline_cls(config) as pipeline:
+                if pipeline_cls is STTWakePipeline:
+                    wake_phrases = [(a.wake_phrase, i) for i, a in enumerate(config.agents)]
+                    pipeline_ctx = pipeline_cls(config, wake_phrases)
+                else:
+                    pipeline_ctx = pipeline_cls(config)
+                with pipeline_ctx as pipeline:
                     # Toggle callback (called from hotkey thread)
                     def on_toggle():
                         nonlocal active
@@ -152,9 +169,15 @@ def main(debug: bool = False) -> None:
                         agent = router.route(keyword_index)
                         logger.info("Routing to agent '%s'", agent.name)
 
-                        # 3. Transcribe speech
-                        transcript = await transcribe_fn(pipeline.frame_queue)
-                        pipeline.set_state(PipelineState.LISTENING)
+                        # 3. Transcribe speech (may already be captured in single-utterance mode)
+                        pending = getattr(pipeline, "pending_command", None)
+                        if pending:
+                            transcript = pending
+                            pipeline.pending_command = None
+                            pipeline.set_state(PipelineState.LISTENING)
+                        else:
+                            transcript = await transcribe_fn(pipeline.frame_queue)
+                            pipeline.set_state(PipelineState.LISTENING)
 
                         if not transcript:
                             logger.info("Empty transcript, returning to listening")
