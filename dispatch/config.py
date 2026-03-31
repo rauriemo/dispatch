@@ -34,6 +34,7 @@ class AgentConfig:
     token_env: str
     voice: str
     wake_phrase: str = ""
+    fallback_voice: str = ""
 
 
 @dataclass
@@ -75,6 +76,7 @@ def load_config(debug: bool = False) -> DispatchConfig:
             token_env=cfg["token_env"],
             voice=cfg["voice"],
             wake_phrase=wake_phrase,
+            fallback_voice=cfg.get("fallback_voice", ""),
         ))
 
     webhook_port = settings.get("webhook_port", 0)

@@ -96,7 +96,8 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 - **Always-on wake word**: Picovoice Porcupine runs entirely on-device (~1% CPU). No cloud calls until you speak. Falls back to STT-based wake detection if Picovoice is unavailable.
 - **Proactive voice push**: agents deliver unsolicited messages via a node WebSocket connection with `voice` capability. The gateway invokes `voice.speak` and Dispatch plays it through TTS. Priority queue with urgent/normal levels.
 - **Webhook endpoint for scheduled delivery**: localhost-only `POST /notify` endpoint receives notifications from external sources like cron jobs. Opt-in per cron job -- only reminders explicitly targeting Dispatch are delivered. Optional Bearer token auth.
-- **Per-agent voices**: each agent gets its own Edge TTS voice for instant recognition.
+- **Premium TTS with fallback**: supports OpenAI, ElevenLabs, Google Cloud TTS, and Edge TTS (free). Each agent specifies a primary voice (e.g., `openai/nova`) with an automatic Edge TTS fallback if the provider fails.
+- **Per-agent voices**: each agent gets its own voice for instant recognition. Provider prefix format matches OpenClaw conventions.
 - **Three-tier pipeline fallback**: Picovoice (local, fast) -> STT-based wake detection (Google Cloud, voice-driven) -> keyboard input (debug). Dispatch picks the best available pipeline automatically based on credentials.
 - **Single-utterance wake**: with STT wake detection, say "hey navi, what's the weather" in one sentence -- the wake phrase and command are captured together, no second listen required.
 - **Debug mode**: keyboard-driven fallback (`--debug`) for the entire pipeline. Test everything without hardware or cloud accounts.
@@ -104,7 +105,7 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 108 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS, notifications, webhook, and end-to-end debug flow. All offline, under 6 seconds.
+- **Fully tested**: 131 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS provider routing and fallback, notifications, webhook, and end-to-end debug flow. All offline, under 6 seconds.
 
 ## Prerequisites
 
@@ -114,7 +115,10 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 | [Picovoice account](https://console.picovoice.ai) | Wake word detection (tier 1, local) | No -- STT wake or keyboard fallback |
 | [Google Cloud STT](https://cloud.google.com/speech-to-text) | Speech-to-text + wake detection (tier 2) | No -- typed input fallback |
 | IAP tunnel to OpenClaw VM | Navi agent (WebSocket gateway) | No -- agent fails gracefully |
-| Edge TTS | Voice responses | Yes (free, no account) |
+| Edge TTS | Voice responses (free fallback) | Yes (free, no account) |
+| [OpenAI API key](https://platform.openai.com) | Premium TTS voices (optional) | No -- falls back to Edge TTS |
+| [ElevenLabs API key](https://elevenlabs.io) | Premium TTS voices (optional) | No -- falls back to Edge TTS |
+| [Google Cloud TTS](https://cloud.google.com/text-to-speech) | Premium TTS voices (optional) | No -- falls back to Edge TTS |
 
 ## Going Live
 
@@ -188,7 +192,8 @@ agents:
     wake_word: assets/hey-navi.ppn
     endpoint: http://localhost:18789
     token_env: OPENCLAW_TOKEN    # env var name, NOT the value
-    voice: en-US-AvaMultilingualNeural
+    voice: openai/nova           # provider/voice_name format
+    fallback_voice: en-US-AvaMultilingualNeural  # free Edge TTS fallback
 ```
 
 The `settings` block configures the system. Each agent entry specifies:
@@ -200,7 +205,8 @@ The `settings` block configures the system. Each agent entry specifies:
 | `wake_phrase` | Text wake phrase for STT detection (auto-derived from `.ppn` filename if omitted) |
 | `endpoint` | Agent API URL |
 | `token_env` | Name of the env var holding the auth token |
-| `voice` | Edge TTS voice ID for this agent's responses |
+| `voice` | TTS voice with provider prefix (`openai/nova`, `elevenlabs/Rachel`, `google/en-US-Neural2-F`, or Edge TTS name) |
+| `fallback_voice` | Free Edge TTS voice used when the primary provider fails (optional) |
 
 ### .env
 
@@ -208,6 +214,8 @@ The `settings` block configures the system. Each agent entry specifies:
 PICOVOICE_ACCESS_KEY=your-picovoice-access-key
 OPENCLAW_TOKEN=your-openclaw-gateway-token
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
+OPENAI_API_KEY=sk-...                 # optional, for openai/ TTS voices
+ELEVENLABS_API_KEY=...                # optional, for elevenlabs/ TTS voices
 ```
 
 Secrets never go in `agents.yaml`. The YAML references env var **names**; `.env` holds the **values**.
@@ -282,14 +290,20 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the captu
 
 ## Voice Catalog
 
-| Agent | Voice | Character |
-|---|---|---|
-| Navi (OpenClaw) | `en-US-AvaMultilingualNeural` | Friendly, expressive female |
-| *(future)* | `en-US-AriaNeural` | Friendly, expressive female |
-| *(future)* | `en-US-EricNeural` | Deep, authoritative male |
-| *(future)* | `en-US-JennyNeural` | Warm, conversational female |
+Voices use a provider prefix format. Supported providers:
 
-13+ en-US voices available, all free. Run `edge-tts --list-voices` for the full catalog.
+| Provider | Format | API Key Env Var |
+|---|---|---|
+| OpenAI | `openai/nova`, `openai/alloy`, `openai/shimmer` | `OPENAI_API_KEY` |
+| ElevenLabs | `elevenlabs/Rachel`, `elevenlabs/<voice_id>` | `ELEVENLABS_API_KEY` |
+| Google Cloud | `google/en-US-Neural2-F`, `google/en-US-Studio-O` | `GOOGLE_APPLICATION_CREDENTIALS` |
+| Edge TTS (free) | `en-US-AvaMultilingualNeural` (no prefix needed) | None |
+
+| Agent | Primary Voice | Fallback Voice |
+|---|---|---|
+| Navi (OpenClaw) | `openai/nova` | `en-US-AvaMultilingualNeural` |
+
+If the primary provider fails (missing key, rate limit), each sentence automatically falls back to the Edge TTS voice. Run `edge-tts --list-voices` for the full free voice catalog.
 
 ## Development
 
@@ -308,14 +322,14 @@ python -m dispatch                  # Live mode
 |---|---|---|
 | AudioPipeline + state machine | Complete | Live + debug mode |
 | Google Cloud STT streaming | Complete | Blocking gRPC in thread, debug fallback |
-| Edge TTS playback | Complete | Pipelined sentence-by-sentence, in-memory BytesIO, per-agent voice |
+| TTS playback | Complete | Multi-provider (OpenAI, ElevenLabs, Google Cloud, Edge), pipelined sentence-by-sentence, auto-fallback |
 | Agent routing | Complete | Type registry, config-driven |
 | OpenClaw agent | Complete | Dual WebSocket (operator chat + node voice push), Ed25519 device auth, streaming chat |
 | Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
 | STT wake fallback | Complete | Google STT-based wake detection, single-utterance support |
-| Test suite | Complete | 108 tests, full offline coverage |
+| Test suite | Complete | 131 tests, full offline coverage |
 | Wake word (live, Picovoice) | Waiting | Picovoice account approval pending |
 | Wake word (live, STT) | Ready | Uses Google Cloud STT, works with just GOOGLE_APPLICATION_CREDENTIALS |
 | Google STT (live) | Ready | API enabled, service account key needed |

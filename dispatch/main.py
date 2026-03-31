@@ -94,6 +94,9 @@ def main(debug: bool = False) -> None:
         tray_icon = None
 
         async with AgentRouter(config.agents) as router:
+            agent_fallbacks = {
+                ac.name: ac.fallback_voice for ac in config.agents
+            }
             notification_queue = NotificationQueue()
             for agent in router.agents:
                 await agent.subscribe(notification_queue)
@@ -154,7 +157,12 @@ def main(debug: bool = False) -> None:
                             except asyncio.QueueEmpty:
                                 break
                             pipeline.pause()
-                            await speak(f"{notif.agent_name} says: {notif.text}", notif.agent_voice)
+                            notif_fb = agent_fallbacks.get(notif.agent_name, "")
+                            await speak(
+                                f"{notif.agent_name} says: {notif.text}",
+                                notif.agent_voice,
+                                notif_fb,
+                            )
                             pipeline.resume()
 
                         # 2. Listen for wake words (2s timeout so notifications get checked)
@@ -194,7 +202,8 @@ def main(debug: bool = False) -> None:
 
                         # 5. Speak response
                         pipeline.pause()
-                        await speak(response, agent.voice)
+                        fb = agent_fallbacks.get(agent.name, "")
+                        await speak(response, agent.voice, fb)
                         pipeline.resume()
             finally:
                 if webhook_server:

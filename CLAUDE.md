@@ -116,7 +116,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/main.py` | Hotkey toggle, system tray, main voice-command loop, shutdown |
 | `dispatch/audio.py` | `AudioPipeline` (pvrecorder + Porcupine), `STTWakePipeline` (pvrecorder + Google STT), `DebugPipeline`, chime generation |
 | `dispatch/stt.py` | `stream_transcribe` (Google Cloud STT streaming), `debug_transcribe` (typed input) |
-| `dispatch/tts.py` | `speak()` -- pipelined sentence-by-sentence TTS (edge-tts + pygame) |
+| `dispatch/tts.py` | `speak()` -- multi-provider TTS (OpenAI, ElevenLabs, Google Cloud, Edge), pipelined sentence-by-sentence, auto-fallback |
 | `dispatch/config.py` | `DispatchConfig`/`AgentConfig` dataclasses, YAML + .env loading, validation, wake phrase derivation |
 | `dispatch/notifications.py` | `Notification` dataclass, `NotificationQueue` (asyncio.PriorityQueue wrapper) |
 | `dispatch/agents/base.py` | `BaseAgent` ABC, `AgentError`, `AgentRouter` (type registry + routing) |
@@ -124,8 +124,8 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/crypto.py` | Ed25519 device identity for OpenClaw gateway handshake |
 | `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
-| `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice |
-| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `DISPATCH_WEBHOOK_SECRET` |
+| `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice (provider prefix), fallback voice |
+| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
 
@@ -148,7 +148,9 @@ Install deps first: `pip install -r requirements.txt`
 - **Frame queue**: `queue.Queue` (stdlib), never `asyncio.Queue`. Both the capture thread and STT thread are sync contexts.
 - **Blocking gRPC**: Google STT `streaming_recognize()` runs via `asyncio.to_thread()`. pvrecorder `read()` runs in a `threading.Thread`. Neither blocks the event loop.
 - **Frame format**: pvrecorder returns `list[int]` (int16). Porcupine accepts this directly. STT needs bytes -- `array.array("h", frame).tobytes()` (faster than `struct.pack`).
+- **Multi-provider TTS**: Voice strings use provider prefixes: `openai/nova`, `elevenlabs/Rachel`, `google/en-US-Neural2-F`. No prefix means Edge TTS. Each agent has `voice` (primary) and `fallback_voice` (free Edge TTS backup). On provider failure (missing key, rate limit), fallback happens per-sentence so partial responses still play.
 - **Pipelined TTS**: `speak()` splits text into sentences, synthesizes them concurrently in a producer task, and plays them sequentially. The first sentence starts playing while the rest are still being generated, minimizing perceived latency. Emoji and markdown are stripped before synthesis.
+- **TTS provider env vars**: `OPENAI_API_KEY` for OpenAI TTS, `ELEVENLABS_API_KEY` for ElevenLabs, `GOOGLE_APPLICATION_CREDENTIALS` for Google Cloud TTS (reused from STT). Provider SDKs are lazy-imported -- only the configured provider needs to be installed.
 - **pygame TTS load**: `pygame.mixer.music.load(buffer, "mp3")` -- the `"mp3"` string is required for BytesIO MP3 data. Without it pygame fails silently.
 - **BytesIO seek**: `buffer.seek(0)` before `pygame.mixer.music.load()`. After collecting edge-tts chunks the cursor is at end -- without seek, pygame reads zero bytes.
 - **pygame mixer init**: `frequency=44100, size=-16, channels=2, buffer=2048`. Stereo (channels=2) because edge-tts MP3 may be stereo.
@@ -340,16 +342,22 @@ The agent should recognize delivery intent keywords ("on Dispatch", "voice remin
 
 ## Voice catalog
 
-Each agent specifies an Edge TTS voice in `agents.yaml`. All en-US voices are free, no API key.
+Voices use a provider prefix format: `provider/voice_name`. Supported providers:
 
-| Agent | Voice | Character |
-|---|---|---|
-| Navi (OpenClaw) | `en-US-AvaMultilingualNeural` | Friendly, expressive female |
-| (future) | `en-US-AriaNeural` | Friendly, expressive female |
-| (future) | `en-US-EricNeural` | Deep, authoritative male |
-| (future) | `en-US-JennyNeural` | Warm, conversational female |
+| Provider | Prefix | Env var | Notes |
+|---|---|---|---|
+| OpenAI TTS | `openai/` | `OPENAI_API_KEY` | Voices: alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer |
+| ElevenLabs | `elevenlabs/` | `ELEVENLABS_API_KEY` | 1200+ voices by name or ID |
+| Google Cloud TTS | `google/` | `GOOGLE_APPLICATION_CREDENTIALS` | WaveNet/Neural2/Studio voices |
+| Edge TTS | `edge/` or no prefix | None (free) | 13+ en-US voices, no API key needed |
 
-Full catalog: `edge-tts --list-voices`. Swap any voice by editing one line in `agents.yaml`.
+Each agent specifies `voice` (primary, may be paid) and `fallback_voice` (free Edge TTS backup). If the primary provider fails, TTS falls back per-sentence.
+
+| Agent | Primary Voice | Fallback | Character |
+|---|---|---|---|
+| Navi (OpenClaw) | `openai/nova` | `en-US-AvaMultilingualNeural` | Friendly, natural female |
+
+Full Edge TTS catalog: `edge-tts --list-voices`. Swap any voice by editing `agents.yaml`.
 
 ## Notification priority model
 
@@ -398,7 +406,8 @@ agents:
     # wake_phrase: hey myagent  (auto-derived from wake_word if omitted)
     endpoint: http://localhost:9999
     token_env: MYAGENT_TOKEN
-    voice: en-US-AriaNeural
+    voice: openai/nova              # or edge/en-US-AriaNeural, elevenlabs/Rachel, etc.
+    fallback_voice: en-US-AriaNeural  # free Edge TTS fallback (optional)
 ```
 
 4. Add the token to `.env` and the `.ppn` wake word file to `assets/`.

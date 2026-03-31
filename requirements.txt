@@ -1,6 +1,7 @@
 pvporcupine
 pvrecorder
 google-cloud-speech
+google-cloud-texttospeech
 edge-tts
 pygame
 pynput
@@ -12,3 +13,5 @@ cryptography
 pystray
 Pillow
 aiohttp
+openai
+elevenlabs
