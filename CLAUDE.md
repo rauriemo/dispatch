@@ -32,16 +32,16 @@ Transitions: LISTENING->RECORDING on wake word detection, RECORDING->LISTENING w
 
 When Picovoice is unavailable but Google Cloud credentials exist, `STTWakePipeline` provides voice-based wake word detection using Google Cloud STT. Same state machine as `AudioPipeline` but replaces Porcupine with continuous STT transcription and text matching.
 
-A background thread runs pvrecorder (no access key needed) + Google STT in a loop:
-- In LISTENING state: frames stream to `streaming_recognize(single_utterance=True)`. Each stream captures one spoken phrase, then the transcript is checked against registered wake phrases.
+A background thread runs pvrecorder (no access key needed) + Google STT in a continuous loop:
+- In LISTENING state: frames stream to `streaming_recognize()` (no `single_utterance`). The stream runs continuously, checking each final result for wake phrases inline. When matched, the stream closes and the pipeline transitions.
 - If matched: chime plays, `keyword_index` and optional `pending_command` are stored, state transitions to RECORDING, async wake event fires.
-- If no match: loop starts a new STT stream immediately.
+- If no match: the stream continues listening for the next utterance. A new stream starts only on error, state change, or Google's ~5 minute streaming limit.
 - In RECORDING state: frames go to `frame_queue` for command transcription.
 - In PAUSED state: frames discarded.
 
 **Single-utterance support:** "Hey navi, what's the weather?" is handled in one shot. The wake phrase is matched and the command text after it is extracted into `pending_command`. The main loop checks `pending_command` before calling the transcribe function -- if present, it skips the second STT call entirely.
 
-**Wake phrase matching:** case-insensitive, strips punctuation between phrase and command. Phrases are configured via `wake_phrase` in `agents.yaml` (auto-derived from .ppn filename if omitted).
+**Wake phrase matching:** case-insensitive with fuzzy word matching (`difflib.SequenceMatcher`, threshold 0.65). Handles Google STT transcription variants (e.g., "na'vi", "naive" for "navi"). Strips smart quotes and punctuation. `speech_contexts` with `boost=20.0` biases Google STT toward wake phrases. Phrases are configured via `wake_phrase` in `agents.yaml` (auto-derived from .ppn filename if omitted).
 
 **Cost:** Google STT streams continuously while LISTENING (~$0.006/15s). Toggle Dispatch off when not in use.
 
@@ -116,7 +116,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/main.py` | Hotkey toggle, system tray, main voice-command loop, shutdown |
 | `dispatch/audio.py` | `AudioPipeline` (pvrecorder + Porcupine), `STTWakePipeline` (pvrecorder + Google STT), `DebugPipeline`, chime generation |
 | `dispatch/stt.py` | `stream_transcribe` (Google Cloud STT streaming), `debug_transcribe` (typed input) |
-| `dispatch/tts.py` | `speak()` -- edge-tts to BytesIO, pygame playback |
+| `dispatch/tts.py` | `speak()` -- pipelined sentence-by-sentence TTS (edge-tts + pygame) |
 | `dispatch/config.py` | `DispatchConfig`/`AgentConfig` dataclasses, YAML + .env loading, validation, wake phrase derivation |
 | `dispatch/notifications.py` | `Notification` dataclass, `NotificationQueue` (asyncio.PriorityQueue wrapper) |
 | `dispatch/agents/base.py` | `BaseAgent` ABC, `AgentError`, `AgentRouter` (type registry + routing) |
@@ -147,17 +147,19 @@ Install deps first: `pip install -r requirements.txt`
 
 - **Frame queue**: `queue.Queue` (stdlib), never `asyncio.Queue`. Both the capture thread and STT thread are sync contexts.
 - **Blocking gRPC**: Google STT `streaming_recognize()` runs via `asyncio.to_thread()`. pvrecorder `read()` runs in a `threading.Thread`. Neither blocks the event loop.
-- **Frame format**: pvrecorder returns `list[int]` (int16). Porcupine accepts this directly. STT needs bytes -- `struct.pack(f'<{len(frame)}h', *frame)`.
+- **Frame format**: pvrecorder returns `list[int]` (int16). Porcupine accepts this directly. STT needs bytes -- `array.array("h", frame).tobytes()` (faster than `struct.pack`).
+- **Pipelined TTS**: `speak()` splits text into sentences, synthesizes them concurrently in a producer task, and plays them sequentially. The first sentence starts playing while the rest are still being generated, minimizing perceived latency. Emoji and markdown are stripped before synthesis.
 - **pygame TTS load**: `pygame.mixer.music.load(buffer, "mp3")` -- the `"mp3"` string is required for BytesIO MP3 data. Without it pygame fails silently.
 - **BytesIO seek**: `buffer.seek(0)` before `pygame.mixer.music.load()`. After collecting edge-tts chunks the cursor is at end -- without seek, pygame reads zero bytes.
 - **pygame mixer init**: `frequency=44100, size=-16, channels=2, buffer=2048`. Stereo (channels=2) because edge-tts MP3 may be stereo.
 - **Hotkey format**: pynput requires angle brackets: `<ctrl>+<shift>+n`. Stored in this exact format in `agents.yaml`. Malformed strings are silently ignored.
 - **Chime**: 150ms 880Hz sine wave via `array.array('h')` + `math.sin()`, loaded as `pygame.mixer.Sound(buffer=...)`. No numpy.
-- **STTWakePipeline**: uses Google STT `streaming_recognize(single_utterance=True)` for wake phrase detection. Runs pvrecorder + STT in one thread. `pending_command` holds the extracted command from single-utterance detection -- main loop checks it before calling `transcribe_fn`. Exponential backoff (1-30s) on STT stream errors.
+- **STTWakePipeline**: uses Google STT `streaming_recognize()` (continuous, no `single_utterance`) for wake phrase detection. Each final result is checked for wake phrases inline -- if matched, the stream closes and the pipeline transitions. Runs pvrecorder + STT in one thread. `pending_command` holds the extracted command -- main loop checks it before calling `transcribe_fn`. Exponential backoff (1-30s) on STT stream errors.
 - **Wake phrase config**: `AgentConfig.wake_phrase` is auto-derived from the `.ppn` filename (`assets/hey-navi.ppn` -> `"hey navi"`). Explicit override via `wake_phrase:` in `agents.yaml`. Platform suffixes (`_en_windows`, etc.) are stripped during derivation.
 - **Context managers**: `AgentRouter` (async with), `AudioPipeline`/`STTWakePipeline`/`DebugPipeline` (with), `httpx.AsyncClient` -- guaranteed cleanup.
 - **WebSocket auto-reconnect**: both `_recv_loop` (operator) and `_node_recv_loop` (node) reconnect independently with exponential backoff (1–30s) on disconnect, re-handshake, and resume frame processing.
-- **Unrequested events**: `chat` events with `state: "final"` whose `runId` doesn't match a pending request are treated as proactive push messages and routed to the notification queue.
+- **Response resolution**: futures are resolved on either `chat.state: "final"` or `agent.lifecycle.end` (whichever arrives first). `_completed_runs` set prevents duplicate notifications when both events arrive for the same `runId`. Send timeout is 60s to accommodate OpenClaw's auto-retry on transient overload.
+- **Unrequested events**: `chat` events with `state: "final"` whose `runId` doesn't match a pending or completed request are treated as proactive push messages and routed to the notification queue.
 - **Webhook server**: `aiohttp.web` on `127.0.0.1` only (never `0.0.0.0`). Disabled when `webhook_port` is 0. Auth is optional (`DISPATCH_WEBHOOK_SECRET` env var). The agent-name-to-voice lookup dict is built from the `AgentRouter`'s agent list at startup.
 - **No audio on disk**: mic frames processed in-place, TTS goes to BytesIO.
 - **Single audio capture**: one pvrecorder instance shared via state machine -- never two mic readers.

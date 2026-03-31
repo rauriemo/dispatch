@@ -82,7 +82,7 @@ flowchart LR
 2. **Say a wake word** (e.g., "hey navi") -- Porcupine detects it locally, zero cloud calls
 3. **Speak your command** -- audio streams to Google Cloud STT, transcript returned on silence
 4. **Transcript routed to the matched agent** -- AgentRouter maps wake word index to the correct backend
-5. **Response spoken aloud** -- Edge TTS generates audio in-memory, played through speakers
+5. **Response spoken aloud** -- Edge TTS generates audio sentence-by-sentence in a pipeline, first sentence plays immediately
 6. **Back to listening** -- ready for the next wake word
 
 Agents can also **push proactive messages** to Dispatch via a second node WebSocket connection. Dispatch registers as a voice-capable device, so the agent can invoke `voice.speak` at any time. Urgent alerts interrupt idle listening; normal messages queue up and play sequentially.
@@ -92,7 +92,7 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 ## Features
 
 - **Multi-agent routing**: different wake words route to different AI backends. Adding an agent is a config entry + one Python file.
-- **Voice in, voice out**: full voice pipeline from wake word to spoken response. No typing required in live mode.
+- **Voice in, voice out**: full voice pipeline from wake word to spoken response. No typing required in live mode. TTS is pipelined sentence-by-sentence for low perceived latency.
 - **Always-on wake word**: Picovoice Porcupine runs entirely on-device (~1% CPU). No cloud calls until you speak. Falls back to STT-based wake detection if Picovoice is unavailable.
 - **Proactive voice push**: agents deliver unsolicited messages via a node WebSocket connection with `voice` capability. The gateway invokes `voice.speak` and Dispatch plays it through TTS. Priority queue with urgent/normal levels.
 - **Webhook endpoint for scheduled delivery**: localhost-only `POST /notify` endpoint receives notifications from external sources like cron jobs. Opt-in per cron job -- only reminders explicitly targeting Dispatch are delivered. Optional Bearer token auth.
@@ -104,7 +104,7 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 104 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, audio conversion, TTS, notifications, webhook, and end-to-end debug flow. All offline, under 6 seconds.
+- **Fully tested**: 108 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS, notifications, webhook, and end-to-end debug flow. All offline, under 6 seconds.
 
 ## Prerequisites
 
@@ -308,14 +308,14 @@ python -m dispatch                  # Live mode
 |---|---|---|
 | AudioPipeline + state machine | Complete | Live + debug mode |
 | Google Cloud STT streaming | Complete | Blocking gRPC in thread, debug fallback |
-| Edge TTS playback | Complete | In-memory BytesIO, per-agent voice |
+| Edge TTS playback | Complete | Pipelined sentence-by-sentence, in-memory BytesIO, per-agent voice |
 | Agent routing | Complete | Type registry, config-driven |
 | OpenClaw agent | Complete | Dual WebSocket (operator chat + node voice push), Ed25519 device auth, streaming chat |
 | Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
 | STT wake fallback | Complete | Google STT-based wake detection, single-utterance support |
-| Test suite | Complete | 104 tests, full offline coverage |
+| Test suite | Complete | 108 tests, full offline coverage |
 | Wake word (live, Picovoice) | Waiting | Picovoice account approval pending |
 | Wake word (live, STT) | Ready | Uses Google Cloud STT, works with just GOOGLE_APPLICATION_CREDENTIALS |
 | Google STT (live) | Ready | API enabled, service account key needed |

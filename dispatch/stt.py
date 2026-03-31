@@ -1,9 +1,9 @@
 """Speech-to-text via Google Cloud STT streaming + debug fallback."""
 
+import array
 import asyncio
 import logging
 import queue
-import struct
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +13,17 @@ async def stream_transcribe(frame_queue: queue.Queue) -> str:
     return await asyncio.to_thread(_blocking_transcribe, frame_queue)
 
 
+_stt_client = None
+
+
 def _blocking_transcribe(frame_queue: queue.Queue) -> str:
     """Run Google Cloud STT in a thread. Reads int16 frames from queue."""
     from google.cloud import speech
 
-    client = speech.SpeechClient()
+    global _stt_client
+    if _stt_client is None:
+        _stt_client = speech.SpeechClient()
+    client = _stt_client
     config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
         sample_rate_hertz=16000,
@@ -35,8 +41,7 @@ def _blocking_transcribe(frame_queue: queue.Queue) -> str:
                 frame = frame_queue.get(timeout=10)
             except queue.Empty:
                 return
-            # Convert list[int] (int16) to raw bytes for Google STT
-            audio_bytes = struct.pack(f"<{len(frame)}h", *frame)
+            audio_bytes = array.array("h", frame).tobytes()
             yield speech.StreamingRecognizeRequest(audio_content=audio_bytes)
 
     try:

@@ -117,6 +117,19 @@ class TestWakePhraseMatching:
         assert index == 0
         assert cmd == "whats the time"
 
+    def test_fuzzy_naive_for_navi(self):
+        """Google STT sometimes transcribes 'navi' as 'naive'."""
+        p = _make_pipeline_for_matching([("hey navi", 0)])
+        index, cmd = p._match_wake_phrase("Hey naive. You the weather like")
+        assert index == 0
+        assert cmd == "you the weather like"
+
+    def test_fuzzy_no_false_positive(self):
+        """Words that are too different should not fuzzy-match."""
+        p = _make_pipeline_for_matching([("hey navi", 0)])
+        index, cmd = p._match_wake_phrase("hey nobody can help")
+        assert index is None
+
 
 # -- STTWakePipeline behavior --------------------------------------------------
 

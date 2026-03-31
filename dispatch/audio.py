@@ -194,15 +194,38 @@ class STTWakePipeline:
         text = re.sub(r"[^\w\s]", " ", text)
         return " ".join(text.lower().split())
 
+    @staticmethod
+    def _words_similar(a: str, b: str) -> bool:
+        """Check if two words are similar enough (handles STT misheard variants)."""
+        if a == b:
+            return True
+        if len(a) < 3 or len(b) < 3:
+            return a == b
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, a, b).ratio() >= 0.65
+
     def _match_wake_phrase(self, transcript: str) -> tuple[Optional[int], Optional[str]]:
-        """Check transcript for a wake phrase. Returns (index, command) or (None, None)."""
+        """Check transcript for a wake phrase. Returns (index, command) or (None, None).
+
+        Tries exact substring match first, then falls back to fuzzy word-level
+        matching to handle STT variants like 'naive' for 'navi'.
+        """
         normalized = self._normalize(transcript)
         for phrase, index in self._wake_phrases:
             norm_phrase = self._normalize(phrase)
+            # Exact substring match
             pos = normalized.find(norm_phrase)
             if pos != -1:
                 after = normalized[pos + len(norm_phrase):].strip()
                 return (index, after if after else None)
+            # Fuzzy word-level match
+            phrase_words = norm_phrase.split()
+            trans_words = normalized.split()
+            for i in range(len(trans_words) - len(phrase_words) + 1):
+                window = trans_words[i:i + len(phrase_words)]
+                if all(self._words_similar(w, p) for w, p in zip(window, phrase_words)):
+                    rest = " ".join(trans_words[i + len(phrase_words):])
+                    return (index, rest if rest else None)
         return (None, None)
 
     # -- background thread -----------------------------------------------------
@@ -238,10 +261,10 @@ class STTWakePipeline:
                 self.frame_queue.put(frame)
                 continue
 
-            # LISTENING: run one STT stream looking for a wake phrase
+            # LISTENING: run continuous STT stream, check each result for wake phrase
             try:
                 logger.debug("Starting STT wake stream...")
-                transcript = self._run_stt_stream()
+                matched = self._run_stt_stream()
                 backoff = 1
             except Exception:
                 logger.warning("STT wake stream error, retrying in %ds", backoff, exc_info=True)
@@ -249,29 +272,23 @@ class STTWakePipeline:
                 backoff = min(backoff * 2, 30)
                 continue
 
-            if not transcript:
-                logger.debug("STT wake stream ended with no speech")
+            if not matched:
+                logger.debug("STT wake stream ended with no match")
                 continue
-
-            logger.debug("STT heard: '%s'", transcript)
-            keyword_index, command = self._match_wake_phrase(transcript)
-            if keyword_index is not None:
-                logger.info("Wake phrase detected: '%s' (index=%d)", transcript, keyword_index)
-                self._chime.play()
-                self._keyword_index = keyword_index
-                self.pending_command = command
-                with self._lock:
-                    self._state = PipelineState.RECORDING
-                if self._loop and self._wake_event:
-                    self._loop.call_soon_threadsafe(self._wake_event.set)
 
         self._recorder.stop()
 
-    def _run_stt_stream(self) -> str:
-        """Run a single-utterance STT stream. Returns the final transcript or ''."""
+    def _run_stt_stream(self) -> bool:
+        """Run a continuous STT stream, checking each final result for wake phrases.
+
+        Returns True if a wake phrase was matched (sets _keyword_index / pending_command),
+        False if the stream ended without a match.
+        """
         from google.cloud import speech
 
-        client = speech.SpeechClient()
+        if not hasattr(self, "_stt_client"):
+            self._stt_client = speech.SpeechClient()
+        client = self._stt_client
         hint_phrases = [p for p, _ in self._wake_phrases]
         config = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
@@ -285,7 +302,6 @@ class STTWakePipeline:
         )
         streaming_config = speech.StreamingRecognitionConfig(
             config=config,
-            single_utterance=True,
             interim_results=True,
         )
 
@@ -302,7 +318,7 @@ class STTWakePipeline:
                     frame = self._recorder.read()
                 except Exception:
                     return
-                audio_bytes = struct.pack(f"<{len(frame)}h", *frame)
+                audio_bytes = array.array("h", frame).tobytes()
                 peak = max(abs(s) for s in frame)
                 frames_sent += 1
                 if frames_sent == 1:
@@ -318,10 +334,22 @@ class STTWakePipeline:
             logger.debug("STT response: results=%d, speech_event=%s", len(response.results), response.speech_event_type)
             for result in response.results:
                 if result.is_final:
-                    return result.alternatives[0].transcript
+                    transcript = result.alternatives[0].transcript
+                    logger.debug("STT heard: '%s'", transcript)
+                    keyword_index, command = self._match_wake_phrase(transcript)
+                    if keyword_index is not None:
+                        logger.info("Wake phrase detected: '%s' (index=%d)", transcript, keyword_index)
+                        self._chime.play()
+                        self._keyword_index = keyword_index
+                        self.pending_command = command
+                        with self._lock:
+                            self._state = PipelineState.RECORDING
+                        if self._loop and self._wake_event:
+                            self._loop.call_soon_threadsafe(self._wake_event.set)
+                        return True
                 elif result.alternatives:
                     logger.debug("STT interim: '%s'", result.alternatives[0].transcript)
-        return ""
+        return False
 
     # -- async interface (same as AudioPipeline) --------------------------------
 

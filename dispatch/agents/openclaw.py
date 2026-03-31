@@ -43,6 +43,7 @@ class OpenClawAgent(BaseAgent):
         self._node_ws = None
         self._device_key = load_or_create_key()
         self._pending: dict[str, asyncio.Future] = {}
+        self._completed_runs: set[str] = set()
         self._recv_task: asyncio.Task | None = None
         self._node_recv_task: asyncio.Task | None = None
         self._notification_queue: NotificationQueue | None = None
@@ -132,7 +133,7 @@ class OpenClawAgent(BaseAgent):
                     "idempotencyKey": req_id,
                 },
             }))
-            return await asyncio.wait_for(future, timeout=30.0)
+            return await asyncio.wait_for(future, timeout=60.0)
         except asyncio.TimeoutError as exc:
             raise AgentError("OpenClaw request timed out") from exc
         except websockets.ConnectionClosed as exc:
@@ -376,6 +377,15 @@ class OpenClawAgent(BaseAgent):
                 if delta:
                     fut._text_buf.append(delta)  # type: ignore[attr-defined]
 
+        elif event_name == "agent" and payload.get("stream") == "lifecycle":
+            phase = payload.get("data", {}).get("phase")
+            if phase == "end" and run_id and run_id in self._pending:
+                self._completed_runs.add(run_id)
+                fut = self._pending[run_id]
+                if not fut.done():
+                    text = "".join(getattr(fut, "_text_buf", []))
+                    fut.set_result(text or "No response text received.")
+
         elif event_name == "chat" and payload.get("state") == "final":
             message = payload.get("message", {})
             content = message.get("content", [])
@@ -389,6 +399,9 @@ class OpenClawAgent(BaseAgent):
                     text = "".join(getattr(fut, "_text_buf", []))
                 if not fut.done():
                     fut.set_result(text or "No response text received.")
+                self._completed_runs.add(run_id)
+            elif run_id and run_id in self._completed_runs:
+                self._completed_runs.discard(run_id)
             elif text:
                 await self._enqueue_notification(text)
 

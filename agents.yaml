@@ -1,6 +1,6 @@
 settings:
   hotkey: "<ctrl>+<shift>+n"
-  audio_device: -1
+  audio_device: 2
   log_level: INFO
   webhook_port: 18790
 
