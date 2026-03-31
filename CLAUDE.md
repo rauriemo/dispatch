@@ -209,7 +209,7 @@ Each agent specifies an Edge TTS voice in `agents.yaml`. All en-US voices are fr
 
 | Agent | Voice | Character |
 |---|---|---|
-| Navi (OpenClaw) | `en-US-GuyNeural` | Calm, informational male |
+| Navi (OpenClaw) | `en-US-AvaMultilingualNeural` | Friendly, expressive female |
 | (future) | `en-US-AriaNeural` | Friendly, expressive female |
 | (future) | `en-US-EricNeural` | Deep, authoritative male |
 | (future) | `en-US-JennyNeural` | Warm, conversational female |

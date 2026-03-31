@@ -158,7 +158,7 @@ agents:
     wake_word: assets/hey-navi.ppn
     endpoint: http://localhost:18789
     token_env: OPENCLAW_TOKEN    # env var name, NOT the value
-    voice: en-US-GuyNeural
+    voice: en-US-AvaMultilingualNeural
 ```
 
 The `settings` block configures the system. Each agent entry specifies:
@@ -253,7 +253,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the captu
 
 | Agent | Voice | Character |
 |---|---|---|
-| Navi (OpenClaw) | `en-US-GuyNeural` | Calm, informational male |
+| Navi (OpenClaw) | `en-US-AvaMultilingualNeural` | Friendly, expressive female |
 | *(future)* | `en-US-AriaNeural` | Friendly, expressive female |
 | *(future)* | `en-US-EricNeural` | Deep, authoritative male |
 | *(future)* | `en-US-JennyNeural` | Warm, conversational female |

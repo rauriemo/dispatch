@@ -9,4 +9,4 @@ agents:
     wake_word: assets/hey-navi.ppn
     endpoint: http://localhost:18789
     token_env: OPENCLAW_TOKEN
-    voice: en-US-GuyNeural
+    voice: en-US-AvaMultilingualNeural
