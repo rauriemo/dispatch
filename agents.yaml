@@ -1,0 +1,12 @@
+settings:
+  hotkey: "<ctrl>+<shift>+n"
+  audio_device: -1
+  log_level: INFO
+
+agents:
+  navi:
+    type: openclaw
+    wake_word: assets/hey-navi.ppn
+    endpoint: http://localhost:18789
+    token_env: OPENCLAW_TOKEN
+    voice: en-US-GuyNeural

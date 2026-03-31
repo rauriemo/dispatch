@@ -1,0 +1,12 @@
+pvporcupine
+pvrecorder
+google-cloud-speech
+edge-tts
+pygame
+pynput
+pyyaml
+httpx
+websockets
+python-dotenv
+pystray
+Pillow
