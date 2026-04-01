@@ -91,7 +91,9 @@ A configurable broadcast wake phrase (default `"hey all"`, set via `broadcast_wa
 6. Responses are spoken back-to-back: `"{agent.name} says: {clamped_response}"`
 7. If an agent fails, its slot says `"{agent.name} is not responding"` and the others still play
 
-**Checkin shortcut:** "hey all checkin" (also "check in", "checking in") skips the agent backends entirely. Each agent announces itself locally: `"{agent.name} checking in"` in its own voice. No network calls.
+**Checkin shortcut:** "hey all checkin" (also "check in", "checking in") skips the agent backends entirely. Each agent announces itself locally: `"{agent.name} checking in"` in its own voice. No network calls. Uses exact-match to avoid false positives like "check in on the deployment".
+
+**Latest keyword:** "hey all latest" (also "whats latest", and STT variants like "the latest") asks every agent what they last worked on. Each gets the prompt `"In 1-2 sentences, what is the last thing you worked on or did?"` and responses are clamped to 2 sentences. Works in single-agent mode too: "hey navi latest" queries just that agent. Uses substring matching to handle STT filler. "update" intentionally excluded from variants to avoid false positives.
 
 **Pipeline integration:**
 - `DebugPipeline` appends the broadcast phrase to `_wake_phrases` in `__init__`, so typing "hey all" in debug mode returns the correct synthetic index

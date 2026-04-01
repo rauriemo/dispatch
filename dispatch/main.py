@@ -19,19 +19,42 @@ from dispatch.webhook import WebhookServer
 
 logger = logging.getLogger(__name__)
 
-# Sentence-ending punctuation for _limit_to_one_sentence
 _SENTENCE_ENDERS = ".!?"
+_LATEST_VARIANTS = ("latest", "whats latest")
+_LATEST_PROMPT = "In 1-2 sentences, what is the last thing you worked on or did?"
+
+
+def _limit_to_n_sentences(text: str, n: int) -> str:
+    """Clamp *text* to the first *n* sentences.
+
+    Only splits on sentence-ending punctuation followed by whitespace or
+    end-of-string, so abbreviations like ``v2.1`` are not treated as
+    sentence boundaries.
+    """
+    text = text.strip()
+    count = 0
+    for i, ch in enumerate(text):
+        if ch in _SENTENCE_ENDERS and i > 0:
+            next_ch = text[i + 1] if i + 1 < len(text) else " "
+            if next_ch in (" ", "\n") or i + 1 == len(text):
+                count += 1
+                if count >= n:
+                    return text[: i + 1]
+    return text
 
 
 def _limit_to_one_sentence(text: str) -> str:
-    """Clamp text to first sentence. Agents are asked for one sentence in
-    broadcast mode, but if they ignore the instruction this ensures only the
-    first sentence is spoken."""
-    text = text.strip()
-    for i, ch in enumerate(text):
-        if ch in _SENTENCE_ENDERS and i > 0:
-            return text[: i + 1]
-    return text
+    """Backward-compatible wrapper -- clamp to first sentence."""
+    return _limit_to_n_sentences(text, 1)
+
+
+def _is_latest_keyword(transcript: str) -> bool:
+    """Substring match for 'latest' variants.
+
+    Handles STT filler like 'the latest', 'what's the latest'.
+    """
+    normalized = transcript.strip().lower()
+    return any(v in normalized for v in _LATEST_VARIANTS)
 
 
 # ── System tray ──────────────────────────────────────────────────────
@@ -220,6 +243,28 @@ def main(debug: bool = False) -> None:
                                 pipeline.resume()
                                 continue
 
+                            # "latest" keyword -- ask each agent for a quick status
+                            if transcript and _is_latest_keyword(transcript):
+                                logger.info("Broadcast latest")
+                                tasks = [a.send(_LATEST_PROMPT) for a in router.agents]
+                                results = await asyncio.gather(
+                                    *tasks, return_exceptions=True,
+                                )
+                                pipeline.pause()
+                                for agent, result in zip(router.agents, results):
+                                    fb = agent_fallbacks.get(agent.name, "")
+                                    if isinstance(result, Exception):
+                                        logger.error(
+                                            "Agent '%s' failed in broadcast latest",
+                                            agent.name, exc_info=result,
+                                        )
+                                        text = f"{agent.name} is not responding"
+                                    else:
+                                        text = f"{agent.name} says: {_limit_to_n_sentences(result, 2)}"
+                                    await speak(text, agent.voice, fb)
+                                pipeline.resume()
+                                continue
+
                             if not transcript:
                                 logger.info("Empty transcript, returning to listening")
                                 continue
@@ -256,6 +301,21 @@ def main(debug: bool = False) -> None:
 
                             if not transcript:
                                 logger.info("Empty transcript, returning to listening")
+                                continue
+
+                            # "latest" keyword -- quick status from this agent
+                            if _is_latest_keyword(transcript):
+                                logger.info("Latest keyword detected for agent '%s'", agent.name)
+                                try:
+                                    response = await agent.send(_LATEST_PROMPT)
+                                except AgentError:
+                                    logger.error("Agent '%s' failed", agent.name, exc_info=True)
+                                    response = f"{agent.name} is not responding"
+                                response = _limit_to_n_sentences(response, 2)
+                                pipeline.pause()
+                                fb = agent_fallbacks.get(agent.name, "")
+                                await speak(response, agent.voice, fb)
+                                pipeline.resume()
                                 continue
 
                             logger.info("Transcript: %s", transcript)

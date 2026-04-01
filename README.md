@@ -109,10 +109,10 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 - **Debug mode**: keyboard-driven fallback (`--debug`) for the entire pipeline. Test everything without hardware or cloud accounts.
 - **No audio on disk**: mic frames processed in-place, TTS output stays in BytesIO. Nothing saved.
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
-- **Broadcast mode ("hey all")**: say "hey all" to fan out a command to every connected agent simultaneously. Responses play back-to-back, each hard-clamped to one sentence. "hey all checkin" triggers a quick roll call where each agent announces itself without hitting the backend.
+- **Broadcast mode ("hey all")**: say "hey all" to fan out a command to every connected agent simultaneously. Responses play back-to-back, each hard-clamped to one sentence. "hey all checkin" triggers a quick roll call. "hey all latest" asks each agent what they last worked on (clamped to 2 sentences). "latest" also works per-agent: "hey navi latest".
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 193 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS provider routing and fallback, broadcast fan-out, notifications, webhook, and end-to-end debug flow. All offline, under 7 seconds.
+- **Fully tested**: 220 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS provider routing and fallback, broadcast fan-out, latest keyword, notifications, webhook, and end-to-end debug flow. All offline, under 7 seconds.
 
 ## Prerequisites
 
@@ -344,8 +344,8 @@ python -m dispatch                  # Live mode
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
 | STT wake fallback | Complete | Google STT-based wake detection, single-utterance support |
-| Broadcast mode | Complete | "hey all" fan-out, checkin shortcut, one-sentence clamp |
-| Test suite | Complete | 193 tests, full offline coverage |
+| Broadcast mode | Complete | "hey all" fan-out, checkin shortcut, latest keyword, sentence clamp |
+| Test suite | Complete | 220 tests, full offline coverage |
 | Wake word (live, Picovoice) | Waiting | Picovoice account approval pending |
 | Wake word (live, STT) | Ready | Uses Google Cloud STT, works with just GOOGLE_APPLICATION_CREDENTIALS |
 | Google STT (live) | Ready | API enabled, service account key needed |

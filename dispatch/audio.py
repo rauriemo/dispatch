@@ -21,9 +21,19 @@ CHIME_DURATION_MS = 150
 MIXER_RATE = 44100
 
 
-def _is_expected_stt_rollover(exc: Exception) -> bool:
-    """Google STT streams expire after about 305 seconds and should be restarted."""
-    return "Exceeded maximum allowed stream duration" in str(exc)
+def _is_expected_stt_error(exc: Exception) -> tuple[bool, str]:
+    """Classify expected/transient STT errors that should log cleanly.
+
+    Returns ``(True, reason)`` for errors that are routine and recoverable,
+    ``(False, "")`` for anything unexpected that deserves a full traceback.
+    """
+    msg = str(exc)
+    if "Exceeded maximum allowed stream duration" in msg:
+        return True, "stream duration limit reached"
+    from google.api_core import exceptions as gexc
+    if isinstance(exc, (gexc.InternalServerError, gexc.ServiceUnavailable, gexc.DeadlineExceeded)):
+        return True, f"transient server error ({type(exc).__name__})"
+    return False, ""
 
 
 class PipelineState(enum.Enum):
@@ -272,8 +282,9 @@ class STTWakePipeline:
                 matched = self._run_stt_stream()
                 backoff = 1
             except Exception as exc:
-                if _is_expected_stt_rollover(exc):
-                    logger.info("STT wake stream reached Google duration limit, restarting")
+                expected, reason = _is_expected_stt_error(exc)
+                if expected:
+                    logger.info("STT wake stream interrupted: %s, restarting", reason)
                     backoff = 1
                     continue
                 logger.warning("STT wake stream error, retrying in %ds", backoff, exc_info=True)

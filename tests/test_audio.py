@@ -14,7 +14,7 @@ from dispatch.audio import (
     PipelineState,
     DebugPipeline,
     _generate_chime,
-    _is_expected_stt_rollover,
+    _is_expected_stt_error,
     MIXER_RATE,
     CHIME_DURATION_MS,
 )
@@ -154,11 +154,36 @@ class TestDebugPipeline:
             assert hasattr(pipeline, "listen")
 
 
-class TestSTTRollover:
-    def test_expected_rollover_detected(self):
+class TestExpectedSTTErrors:
+    def test_stream_duration_rollover(self):
         exc = RuntimeError("400 Exceeded maximum allowed stream duration of 305 seconds.")
-        assert _is_expected_stt_rollover(exc) is True
+        expected, reason = _is_expected_stt_error(exc)
+        assert expected is True
+        assert "duration limit" in reason
 
-    def test_unexpected_error_not_detected(self):
+    def test_internal_server_error(self):
+        from google.api_core.exceptions import InternalServerError
+        exc = InternalServerError("500 Internal error encountered.")
+        expected, reason = _is_expected_stt_error(exc)
+        assert expected is True
+        assert "InternalServerError" in reason
+
+    def test_service_unavailable(self):
+        from google.api_core.exceptions import ServiceUnavailable
+        exc = ServiceUnavailable("503 Service unavailable.")
+        expected, reason = _is_expected_stt_error(exc)
+        assert expected is True
+        assert "ServiceUnavailable" in reason
+
+    def test_deadline_exceeded(self):
+        from google.api_core.exceptions import DeadlineExceeded
+        exc = DeadlineExceeded("504 Deadline exceeded.")
+        expected, reason = _is_expected_stt_error(exc)
+        assert expected is True
+        assert "DeadlineExceeded" in reason
+
+    def test_unexpected_error_not_matched(self):
         exc = RuntimeError("permission denied")
-        assert _is_expected_stt_rollover(exc) is False
+        expected, reason = _is_expected_stt_error(exc)
+        assert expected is False
+        assert reason == ""

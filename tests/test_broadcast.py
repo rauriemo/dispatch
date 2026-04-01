@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from dispatch.agents.base import AgentError, AgentRouter
 from dispatch.audio import DebugPipeline, PipelineState
 from dispatch.config import AgentConfig, DispatchConfig, load_config
-from dispatch.main import _limit_to_one_sentence
+from dispatch.main import (
+    _is_latest_keyword,
+    _limit_to_n_sentences,
+    _limit_to_one_sentence,
+    _LATEST_PROMPT,
+)
 from dispatch.tts import speak
 
 
@@ -438,3 +443,235 @@ class TestBroadcastWakePhraseList:
         )
         broadcast_index = len(config.agents)
         assert broadcast_index == 1
+
+
+# ── _limit_to_n_sentences ────────────────────────────────────────────
+
+class TestLimitToNSentences:
+    """Tests for the generalized n-sentence clamping helper."""
+
+    def test_two_of_three(self):
+        assert _limit_to_n_sentences("First. Second. Third.", 2) == "First. Second."
+
+    def test_one_of_three(self):
+        assert _limit_to_n_sentences("First. Second. Third.", 1) == "First."
+
+    def test_abbreviation_not_split(self):
+        """v2.1 should not be treated as a sentence boundary."""
+        assert (
+            _limit_to_n_sentences("Version v2.1 is ready. Deploy now.", 1)
+            == "Version v2.1 is ready."
+        )
+
+    def test_decimal_not_split(self):
+        """3.14 should not be treated as a sentence boundary."""
+        assert _limit_to_n_sentences("3.14 is pi. That's math.", 1) == "3.14 is pi."
+
+    def test_fewer_sentences_than_n(self):
+        assert _limit_to_n_sentences("One sentence only", 2) == "One sentence only"
+
+    def test_empty_string(self):
+        assert _limit_to_n_sentences("", 2) == ""
+
+    def test_exclamation_two(self):
+        assert _limit_to_n_sentences("Done! Next up! Third.", 2) == "Done! Next up!"
+
+    def test_question_mark(self):
+        assert _limit_to_n_sentences("Really? I doubt it.", 1) == "Really?"
+
+    def test_sentence_at_end_of_string(self):
+        """Period at end of string (no trailing space) counts as boundary."""
+        assert _limit_to_n_sentences("Only one.", 1) == "Only one."
+
+    def test_backward_compat_wrapper(self):
+        """_limit_to_one_sentence still works via the wrapper."""
+        assert _limit_to_one_sentence("First. Second.") == "First."
+
+
+# ── _is_latest_keyword ───────────────────────────────────────────────
+
+class TestIsLatestKeyword:
+    def test_exact_match(self):
+        assert _is_latest_keyword("latest") is True
+
+    def test_with_filler(self):
+        assert _is_latest_keyword("the latest") is True
+
+    def test_case_insensitive(self):
+        assert _is_latest_keyword("LATEST") is True
+
+    def test_whitespace(self):
+        assert _is_latest_keyword(" latest ") is True
+
+    def test_stt_filler_whats(self):
+        assert _is_latest_keyword("what's the latest") is True
+
+    def test_whats_latest_variant(self):
+        assert _is_latest_keyword("whats latest") is True
+
+    def test_no_match(self):
+        assert _is_latest_keyword("something else") is False
+
+    def test_update_not_matched(self):
+        """'update' intentionally excluded to avoid false positives."""
+        assert _is_latest_keyword("update the readme") is False
+
+    def test_empty_string(self):
+        assert _is_latest_keyword("") is False
+
+
+# ── Latest integration tests ─────────────────────────────────────────
+
+class TestLatestIntegration:
+    async def test_broadcast_latest_fans_out_with_two_sentence_clamp(self, monkeypatch):
+        """'hey all latest' sends status prompt to all agents, clamps to 2 sentences."""
+        config = _make_two_agent_config()
+        monkeypatch.setenv("OPENCLAW_TOKEN", "test-token")
+        monkeypatch.setenv("ANTHEM_TOKEN", "test-token")
+
+        router = AgentRouter(config.agents)
+        for agent in router.agents:
+            agent.connect = AsyncMock()
+            agent.disconnect = AsyncMock()
+
+        router.agents[0].send = AsyncMock(
+            return_value="Refactored the TTS module. Added fallback logic.",
+        )
+        router.agents[1].send = AsyncMock(
+            return_value="Deployed v2.3. Fixed three bugs. Updated docs.",
+        )
+
+        agent_fallbacks = {ac.name: ac.fallback_voice for ac in config.agents}
+
+        spoken = []
+        async def mock_speak(text, voice, fallback=""):
+            spoken.append((text, voice))
+
+        tasks = [a.send(_LATEST_PROMPT) for a in router.agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for agent, result in zip(router.agents, results):
+            fb = agent_fallbacks.get(agent.name, "")
+            if isinstance(result, Exception):
+                text = f"{agent.name} is not responding"
+            else:
+                text = f"{agent.name} says: {_limit_to_n_sentences(result, 2)}"
+            await mock_speak(text, agent.voice, fb)
+
+        router.agents[0].send.assert_called_once_with(_LATEST_PROMPT)
+        router.agents[1].send.assert_called_once_with(_LATEST_PROMPT)
+
+        assert len(spoken) == 2
+        assert spoken[0] == (
+            "navi says: Refactored the TTS module. Added fallback logic.",
+            "google/en-US-Chirp3-HD-Erinome",
+        )
+        assert spoken[1] == (
+            "anthem says: Deployed v2.3. Fixed three bugs.",
+            "google/en-US-Chirp3-HD-Algieba",
+        )
+
+    async def test_broadcast_latest_one_agent_fails(self, monkeypatch):
+        """If one agent fails during latest, error is spoken; others still play."""
+        config = _make_two_agent_config()
+        monkeypatch.setenv("OPENCLAW_TOKEN", "test-token")
+        monkeypatch.setenv("ANTHEM_TOKEN", "test-token")
+
+        router = AgentRouter(config.agents)
+        for agent in router.agents:
+            agent.connect = AsyncMock()
+            agent.disconnect = AsyncMock()
+
+        router.agents[0].send = AsyncMock(side_effect=AgentError("timeout"))
+        router.agents[1].send = AsyncMock(return_value="Merged PR #42.")
+
+        spoken = []
+        async def mock_speak(text, voice, fallback=""):
+            spoken.append((text, voice))
+
+        tasks = [a.send(_LATEST_PROMPT) for a in router.agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for agent, result in zip(router.agents, results):
+            if isinstance(result, Exception):
+                text = f"{agent.name} is not responding"
+            else:
+                text = f"{agent.name} says: {_limit_to_n_sentences(result, 2)}"
+            await mock_speak(text, agent.voice)
+
+        assert len(spoken) == 2
+        assert spoken[0][0] == "navi is not responding"
+        assert spoken[1][0] == "anthem says: Merged PR #42."
+
+    async def test_broadcast_latest_all_agents_fail(self, monkeypatch):
+        """All agents failing during latest should not crash."""
+        config = _make_two_agent_config()
+        monkeypatch.setenv("OPENCLAW_TOKEN", "test-token")
+        monkeypatch.setenv("ANTHEM_TOKEN", "test-token")
+
+        router = AgentRouter(config.agents)
+        for agent in router.agents:
+            agent.connect = AsyncMock()
+            agent.disconnect = AsyncMock()
+            agent.send = AsyncMock(side_effect=AgentError("down"))
+
+        spoken = []
+        async def mock_speak(text, voice, fallback=""):
+            spoken.append((text, voice))
+
+        tasks = [a.send(_LATEST_PROMPT) for a in router.agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for agent, result in zip(router.agents, results):
+            if isinstance(result, Exception):
+                text = f"{agent.name} is not responding"
+            else:
+                text = f"{agent.name} says: {_limit_to_n_sentences(result, 2)}"
+            await mock_speak(text, agent.voice)
+
+        assert len(spoken) == 2
+        assert spoken[0][0] == "navi is not responding"
+        assert spoken[1][0] == "anthem is not responding"
+
+    async def test_single_agent_latest_sends_prompt_and_clamps(self, monkeypatch):
+        """Single-agent 'latest' sends the crafted prompt and clamps to 2 sentences."""
+        config = _make_two_agent_config()
+        monkeypatch.setenv("OPENCLAW_TOKEN", "test-token")
+        monkeypatch.setenv("ANTHEM_TOKEN", "test-token")
+
+        router = AgentRouter(config.agents)
+        for agent in router.agents:
+            agent.connect = AsyncMock()
+            agent.disconnect = AsyncMock()
+
+        router.agents[0].send = AsyncMock(
+            return_value="Fixed the auth bug. Updated tests. Deployed to staging.",
+        )
+
+        agent = router.agents[0]
+        response = await agent.send(_LATEST_PROMPT)
+        agent.send.assert_called_once_with(_LATEST_PROMPT)
+
+        clamped = _limit_to_n_sentences(response, 2)
+        assert clamped == "Fixed the auth bug. Updated tests."
+
+    async def test_single_agent_latest_agent_error(self, monkeypatch):
+        """Single-agent 'latest' gracefully handles agent failure."""
+        config = _make_two_agent_config()
+        monkeypatch.setenv("OPENCLAW_TOKEN", "test-token")
+        monkeypatch.setenv("ANTHEM_TOKEN", "test-token")
+
+        router = AgentRouter(config.agents)
+        for agent in router.agents:
+            agent.connect = AsyncMock()
+            agent.disconnect = AsyncMock()
+
+        router.agents[0].send = AsyncMock(side_effect=AgentError("timeout"))
+
+        try:
+            await router.agents[0].send(_LATEST_PROMPT)
+            response = None
+        except AgentError:
+            response = f"{router.agents[0].name} is not responding"
+
+        assert response == "navi is not responding"
