@@ -34,3 +34,10 @@ agents:
     token_env: REBELTOWER_ANTHEM_TOKEN
     voice: google/en-US-Chirp3-HD-Leda
     fallback_voice: en-US-DavisNeural
+  forge:
+    type: anthem
+    wake_phrase: "hey forge"
+    endpoint: ws://localhost:8084
+    token_env: FORGE_ANTHEM_TOKEN
+    voice: google/en-US-Chirp3-HD-Aoede
+    fallback_voice: en-US-EmmaNeural
