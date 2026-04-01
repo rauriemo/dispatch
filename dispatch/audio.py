@@ -399,27 +399,54 @@ class DebugPipeline:
     Same interface as AudioPipeline so main.py doesn't branch.
     Uses a persistent input thread + asyncio.Event so listen() respects
     timeouts and the main loop can drain notifications between cycles.
+
+    Supports multi-agent wake phrase selection: the user types a wake phrase
+    (e.g. "hey navi" or "hey anthem") and the pipeline matches it to the
+    correct keyword index. The command is collected in the same thread to
+    avoid stdin races with debug_transcribe, then exposed via pending_command.
     """
 
     def __init__(self, config) -> None:
         self.frame_queue: queue.Queue = queue.Queue()
+        self.pending_command: Optional[str] = None
         self._chime = _generate_chime()
         self._input_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._wake_event: Optional[asyncio.Event] = None
+        self._matched_index: int = 0
+        self._wake_phrases: list[str] = []
+        if hasattr(config, "agents"):
+            self._wake_phrases = [a.wake_phrase.lower() for a in config.agents]
+
+    def _match_wake_phrase(self, text: str) -> int:
+        """Match typed text against configured wake phrases. Returns keyword index."""
+        text = text.strip().lower()
+        if not text:
+            return 0
+        for i, phrase in enumerate(self._wake_phrases):
+            if phrase in text or text in phrase:
+                return i
+        return 0
 
     def _input_loop(self) -> None:
-        """Background thread: waits for Enter key presses."""
+        """Background thread: collects wake phrase + command in one flow."""
+        hints = ", ".join(f'"{p}"' for p in self._wake_phrases) if self._wake_phrases else "Enter"
         while True:
             try:
-                input("Press Enter for wake word> ")
+                line = input(f"Wake phrase ({hints})> ")
             except EOFError:
                 break
+            self._matched_index = self._match_wake_phrase(line)
+            try:
+                cmd = input("Say something> ")
+                self.pending_command = cmd.strip() or None
+            except EOFError:
+                self.pending_command = None
             if self._loop and self._wake_event:
                 self._loop.call_soon_threadsafe(self._wake_event.set)
 
     async def listen(self, timeout: float = 2.0) -> Optional[int]:
-        """Wait for Enter key press with timeout. Returns 0 or None."""
+        """Wait for wake phrase + command input. Returns keyword index or None."""
         if self._input_thread is None:
             self._loop = asyncio.get_running_loop()
             self._wake_event = asyncio.Event()
@@ -430,7 +457,7 @@ class DebugPipeline:
         try:
             await asyncio.wait_for(self._wake_event.wait(), timeout=timeout)
             self._chime.play()
-            return 0
+            return self._matched_index
         except asyncio.TimeoutError:
             return None
 

@@ -12,3 +12,11 @@ agents:
     token_env: OPENCLAW_TOKEN
     voice: google/en-US-Chirp3-HD-Erinome
     fallback_voice: en-US-AvaMultilingualNeural
+  anthem:
+    type: anthem
+    wake_word: "hey-anthem"
+    wake_phrase: "hey anthem"
+    endpoint: http://localhost:8081
+    token_env: ANTHEM_TOKEN
+    voice: google/en-US-Chirp3-HD-Algieba
+    fallback_voice: en-US-AndrewNeural
