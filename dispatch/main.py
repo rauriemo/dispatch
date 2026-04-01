@@ -19,6 +19,20 @@ from dispatch.webhook import WebhookServer
 
 logger = logging.getLogger(__name__)
 
+# Sentence-ending punctuation for _limit_to_one_sentence
+_SENTENCE_ENDERS = ".!?"
+
+
+def _limit_to_one_sentence(text: str) -> str:
+    """Clamp text to first sentence. Agents are asked for one sentence in
+    broadcast mode, but if they ignore the instruction this ensures only the
+    first sentence is spoken."""
+    text = text.strip()
+    for i, ch in enumerate(text):
+        if ch in _SENTENCE_ENDERS and i > 0:
+            return text[: i + 1]
+    return text
+
 
 # ── System tray ──────────────────────────────────────────────────────
 
@@ -118,9 +132,12 @@ def main(debug: bool = False) -> None:
                     )
                     webhook_server = None
 
+            broadcast_index = len(config.agents)
+
             try:
                 if pipeline_cls is STTWakePipeline:
                     wake_phrases = [(a.wake_phrase, i) for i, a in enumerate(config.agents)]
+                    wake_phrases.append((config.broadcast_wake_phrase, broadcast_index))
                     pipeline_ctx = pipeline_cls(config, wake_phrases)
                 else:
                     pipeline_ctx = pipeline_cls(config)
@@ -174,9 +191,6 @@ def main(debug: bool = False) -> None:
                         if keyword_index is None:
                             continue
 
-                        agent = router.route(keyword_index)
-                        logger.info("Routing to agent '%s'", agent.name)
-
                         # 3. Transcribe speech (may already be captured in single-utterance mode)
                         pending = getattr(pipeline, "pending_command", None)
                         if pending:
@@ -187,24 +201,77 @@ def main(debug: bool = False) -> None:
                             transcript = await transcribe_fn(pipeline.frame_queue)
                             pipeline.set_state(PipelineState.LISTENING)
 
-                        if not transcript:
-                            logger.info("Empty transcript, returning to listening")
-                            continue
+                        if keyword_index == broadcast_index:
+                            # ── Broadcast mode: all agents ──
+                            logger.info("Broadcast mode triggered")
 
-                        logger.info("Transcript: %s", transcript)
+                            # "checkin" shortcut -- each agent announces itself
+                            if transcript and transcript.strip().lower() in (
+                                "checkin", "check in", "checking in",
+                            ):
+                                logger.info("Broadcast checkin")
+                                pipeline.pause()
+                                for agent in router.agents:
+                                    fb = agent_fallbacks.get(agent.name, "")
+                                    await speak(
+                                        f"{agent.name} checking in",
+                                        agent.voice, fb,
+                                    )
+                                pipeline.resume()
+                                continue
 
-                        # 4. Send to agent
-                        try:
-                            response = await agent.send(transcript)
-                        except AgentError:
-                            logger.error("Agent '%s' failed", agent.name, exc_info=True)
-                            response = f"{agent.name} is not responding"
+                            if not transcript:
+                                logger.info("Empty transcript, returning to listening")
+                                continue
 
-                        # 5. Speak response
-                        pipeline.pause()
-                        fb = agent_fallbacks.get(agent.name, "")
-                        await speak(response, agent.voice, fb)
-                        pipeline.resume()
+                            logger.info("Broadcast transcript: %s", transcript)
+
+                            # Fan out to all agents with 1-sentence limit
+                            prompt = (
+                                "Respond in exactly one sentence. "
+                                + transcript
+                            )
+                            tasks = [a.send(prompt) for a in router.agents]
+                            results = await asyncio.gather(
+                                *tasks, return_exceptions=True,
+                            )
+
+                            pipeline.pause()
+                            for agent, result in zip(router.agents, results):
+                                fb = agent_fallbacks.get(agent.name, "")
+                                if isinstance(result, Exception):
+                                    logger.error(
+                                        "Agent '%s' failed in broadcast",
+                                        agent.name, exc_info=result,
+                                    )
+                                    text = f"{agent.name} is not responding"
+                                else:
+                                    text = f"{agent.name} says: {_limit_to_one_sentence(result)}"
+                                await speak(text, agent.voice, fb)
+                            pipeline.resume()
+                        else:
+                            # ── Single-agent mode ──
+                            agent = router.route(keyword_index)
+                            logger.info("Routing to agent '%s'", agent.name)
+
+                            if not transcript:
+                                logger.info("Empty transcript, returning to listening")
+                                continue
+
+                            logger.info("Transcript: %s", transcript)
+
+                            # Send to agent
+                            try:
+                                response = await agent.send(transcript)
+                            except AgentError:
+                                logger.error("Agent '%s' failed", agent.name, exc_info=True)
+                                response = f"{agent.name} is not responding"
+
+                            # Speak response
+                            pipeline.pause()
+                            fb = agent_fallbacks.get(agent.name, "")
+                            await speak(response, agent.voice, fb)
+                            pipeline.resume()
             finally:
                 if webhook_server:
                     await webhook_server.stop()

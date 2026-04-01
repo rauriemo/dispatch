@@ -45,6 +45,7 @@ class DispatchConfig:
     agents: list[AgentConfig]
     debug: bool
     webhook_port: int = 0
+    broadcast_wake_phrase: str = "hey all"
 
 
 def load_config(debug: bool = False) -> DispatchConfig:
@@ -80,6 +81,7 @@ def load_config(debug: bool = False) -> DispatchConfig:
         ))
 
     webhook_port = settings.get("webhook_port", 0)
+    broadcast_wake_phrase = settings.get("broadcast_wake_phrase", "hey all")
 
     config = DispatchConfig(
         hotkey=hotkey,
@@ -88,6 +90,7 @@ def load_config(debug: bool = False) -> DispatchConfig:
         agents=agents,
         debug=debug,
         webhook_port=webhook_port,
+        broadcast_wake_phrase=broadcast_wake_phrase,
     )
 
     _validate(config)

@@ -3,6 +3,7 @@ settings:
   audio_device: 2
   log_level: INFO
   webhook_port: 18790
+  broadcast_wake_phrase: "hey all"
 
 agents:
   navi:
@@ -14,9 +15,8 @@ agents:
     fallback_voice: en-US-AvaMultilingualNeural
   anthem:
     type: anthem
-    wake_word: "hey-anthem"
-    wake_phrase: "hey anthem"
-    endpoint: http://localhost:8081
+    wake_word: assets/hey-anthem.ppn
+    endpoint: ws://localhost:8081
     token_env: ANTHEM_TOKEN
     voice: google/en-US-Chirp3-HD-Algieba
     fallback_voice: en-US-AndrewNeural

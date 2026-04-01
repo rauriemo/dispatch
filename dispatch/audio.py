@@ -426,6 +426,9 @@ class DebugPipeline:
         self._wake_phrases: list[str] = []
         if hasattr(config, "agents"):
             self._wake_phrases = [a.wake_phrase.lower() for a in config.agents]
+        broadcast = getattr(config, "broadcast_wake_phrase", "")
+        if broadcast:
+            self._wake_phrases.append(broadcast.lower())
 
     def _match_wake_phrase(self, text: str) -> int:
         """Match typed text against configured wake phrases. Returns keyword index."""
