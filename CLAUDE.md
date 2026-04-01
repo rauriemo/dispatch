@@ -47,7 +47,7 @@ A background thread runs pvrecorder (no access key needed) + Google STT in a con
 
 ### AgentRouter
 
-Maps wake-word keyword indices to agent instances. A type registry (`{"openclaw": OpenClawAgent, "anthem": AnthemAgent, ...}`) instantiates agents from `agents.yaml` config. Async context manager -- `__aenter__` connects all agents, `__aexit__` disconnects them. If an agent fails to connect at startup, it logs a warning and continues degraded.
+Maps wake-word keyword indices to agent instances. A type registry (`{"openclaw": OpenClawAgent, "anthem": AnthemAgent, ...}`) instantiates agents from `agents.yaml` config. Multiple agents can share the same `type` (e.g., two `type: anthem` entries on different ports for different projects). Async context manager -- `__aenter__` connects all agents, `__aexit__` disconnects them. If an agent fails to connect at startup, it logs a warning and continues degraded.
 
 ### Dual-connection architecture (OpenClaw)
 
@@ -146,7 +146,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
 | `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice (provider prefix), fallback voice. Settings: hotkey, audio device, log level, webhook port, broadcast wake phrase |
-| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `ANTHEM_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
+| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `ANTHEM_TOKEN`, `DISPATCH_ANTHEM_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
 
@@ -391,7 +391,7 @@ Events become voice notifications. Priority mapping: `task.failed` and `maintena
 
 **Auto-reconnect:** exponential backoff 1-30s, re-authenticates on reconnect.
 
-**Anthem-side adapter:** requires a Go channel adapter in `internal/channel/dispatch/` implementing Anthem's `Channel` interface (Kind/Start/Send/Incoming/Close). Not yet implemented -- see the protocol spec for implementation guidance.
+**Anthem-side adapter:** implemented in Anthem's repo at `internal/channel/dispatch/adapter.go`. The adapter is a WebSocket server that listens on the `channels.target` address from WORKFLOW.md. Auth, correlated req/res routing, and event broadcast are handled server-side. No Dispatch code changes are needed to connect to new Anthem instances -- just add another `type: anthem` entry in `agents.yaml` with a different port and token.
 
 ## Wake word constraints
 
@@ -418,7 +418,8 @@ Each agent specifies `voice` (primary, may be paid) and `fallback_voice` (free E
 | Agent | Primary Voice | Fallback | Character |
 |---|---|---|---|
 | Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` | Warm, expressive female |
-| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` | Distinct voice, task management |
+| Anthem (Anthem repo) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` | Distinct voice, task management |
+| Dispatch-dev (Dispatch repo) | `google/en-US-Chirp3-HD-Charon` | `en-US-BrianNeural` | Deep, separate from other agents |
 
 Full Edge TTS catalog: `edge-tts --list-voices`. Swap any voice by editing `agents.yaml`.
 

@@ -64,8 +64,8 @@ flowchart LR
 
   subgraph agents ["Agent Backends"]
     Navi["OpenClawAgent\n(hey navi)"]
-    Anthem["AnthemAgent\n(hey anthem)"]
-    Future["FutureAgent\n(hey jarvis, etc.)"]
+    Anthem["Anthem on Anthem repo\n(hey anthem)"]
+    DispatchDev["Anthem on Dispatch repo\n(hey dispatch)"]
   end
 
   Hotkey -->|"on/off"| Pipeline
@@ -73,10 +73,10 @@ flowchart LR
   Pipeline -->|"wake word fires"| STT
   STT -->|"transcript"| Navi
   STT -.->|"transcript"| Anthem
-  STT -.->|"transcript"| Future
+  STT -.->|"transcript"| DispatchDev
   Navi -->|"response"| TTS
   Anthem -.->|"response"| TTS
-  Future -.->|"response"| TTS
+  DispatchDev -.->|"response"| TTS
   TTS -->|"audio"| Speaker
   Navi -.->|"push notification"| Tray
 ```
@@ -218,7 +218,8 @@ The `settings` block configures the system. `broadcast_wake_phrase` sets the phr
 ```bash
 PICOVOICE_ACCESS_KEY=your-picovoice-access-key
 OPENCLAW_TOKEN=your-openclaw-gateway-token
-ANTHEM_TOKEN=your-anthem-shared-secret  # shared with Anthem's channels.yaml
+ANTHEM_TOKEN=your-anthem-shared-secret       # shared with Anthem's channels.yaml (Anthem repo)
+DISPATCH_ANTHEM_TOKEN=your-dispatch-secret    # shared with Anthem's channels.yaml (Dispatch repo)
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 OPENAI_API_KEY=sk-...                 # optional, for openai/ TTS voices
 ELEVENLABS_API_KEY=...                # optional, for elevenlabs/ TTS voices
@@ -308,7 +309,8 @@ Voices use a provider prefix format. Supported providers:
 | Agent | Primary Voice | Fallback Voice |
 |---|---|---|
 | Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` |
-| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` |
+| Anthem (Anthem repo) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` |
+| Dispatch-dev (Dispatch repo) | `google/en-US-Chirp3-HD-Charon` | `en-US-BrianNeural` |
 
 If the primary provider fails (missing key, rate limit), each sentence automatically falls back to the Edge TTS voice. Run `edge-tts --list-voices` for the full free voice catalog.
 
@@ -332,7 +334,7 @@ python -m dispatch                  # Live mode
 | TTS playback | Complete | Multi-provider (OpenAI, ElevenLabs, Google Cloud, Edge), pipelined sentence-by-sentence, auto-fallback |
 | Agent routing | Complete | Type registry, config-driven |
 | OpenClaw agent | Complete | Dual WebSocket (operator chat + node voice push), Ed25519 device auth, streaming chat |
-| Anthem agent | Ready | WebSocket chat + event notifications. Anthem-side channel adapter pending. |
+| Anthem agent | Complete | WebSocket chat + event notifications. Multiple instances supported (one per project). |
 | Proactive voice push | Complete | Node connection with voice capability, gateway invokes voice.speak |
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
