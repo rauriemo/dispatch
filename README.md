@@ -106,9 +106,10 @@ A third delivery path -- a localhost webhook endpoint (`POST /notify`) -- accept
 - **Debug mode**: keyboard-driven fallback (`--debug`) for the entire pipeline. Test everything without hardware or cloud accounts.
 - **No audio on disk**: mic frames processed in-place, TTS output stays in BytesIO. Nothing saved.
 - **System tray + hotkey**: toggle listening with a keybind, see status in the tray. Runs quietly in the background.
+- **Broadcast mode ("hey all")**: say "hey all" to fan out a command to every connected agent simultaneously. Responses play back-to-back, each hard-clamped to one sentence. "hey all checkin" triggers a quick roll call where each agent announces itself without hitting the backend.
 - **Graceful degradation**: if an agent is unreachable, Dispatch starts without it. If an agent fails mid-session, the error is spoken aloud and listening resumes.
 - **Config-driven**: agents declared in YAML. Secrets in `.env`. Zero hardcoded endpoints or credentials.
-- **Fully tested**: 131 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS provider routing and fallback, notifications, webhook, and end-to-end debug flow. All offline, under 6 seconds.
+- **Fully tested**: 193 tests covering config, routing, WebSocket gateway protocol, node invoke handling, state machine, STT wake pipeline, fuzzy wake matching, audio conversion, TTS provider routing and fallback, broadcast fan-out, notifications, webhook, and end-to-end debug flow. All offline, under 7 seconds.
 
 ## Prerequisites
 
@@ -188,6 +189,7 @@ settings:
   hotkey: "<ctrl>+<shift>+n"    # pynput angle-bracket format
   audio_device: -1               # pvrecorder device index (-1 = system default)
   log_level: INFO                # DEBUG, INFO, WARNING, ERROR
+  broadcast_wake_phrase: "hey all"  # wake phrase for all-agent broadcast
 
 agents:
   navi:
@@ -199,7 +201,7 @@ agents:
     fallback_voice: en-US-AvaMultilingualNeural  # free Edge TTS fallback
 ```
 
-The `settings` block configures the system. Each agent entry specifies:
+The `settings` block configures the system. `broadcast_wake_phrase` sets the phrase that triggers simultaneous fan-out to all agents (default: "hey all"). Each agent entry specifies:
 
 | Field | Purpose |
 |---|---|
@@ -306,7 +308,7 @@ Voices use a provider prefix format. Supported providers:
 | Agent | Primary Voice | Fallback Voice |
 |---|---|---|
 | Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` |
-| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` |
+| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` |
 
 If the primary provider fails (missing key, rate limit), each sentence automatically falls back to the Edge TTS voice. Run `edge-tts --list-voices` for the full free voice catalog.
 
@@ -335,7 +337,8 @@ python -m dispatch                  # Live mode
 | Webhook endpoint | Complete | Localhost-only POST /notify for cron/scheduled delivery, optional auth |
 | Hotkey + system tray | Complete | pynput + pystray, Pillow-generated icon |
 | STT wake fallback | Complete | Google STT-based wake detection, single-utterance support |
-| Test suite | Complete | 159 tests, full offline coverage |
+| Broadcast mode | Complete | "hey all" fan-out, checkin shortcut, one-sentence clamp |
+| Test suite | Complete | 193 tests, full offline coverage |
 | Wake word (live, Picovoice) | Waiting | Picovoice account approval pending |
 | Wake word (live, STT) | Ready | Uses Google Cloud STT, works with just GOOGLE_APPLICATION_CREDENTIALS |
 | Google STT (live) | Ready | API enabled, service account key needed |

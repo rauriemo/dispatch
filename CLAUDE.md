@@ -78,6 +78,26 @@ Webhook details:
 
 This is **opt-in per cron job**: only reminders the user explicitly asks to be delivered via Dispatch should target this endpoint. The routing decision lives on the OpenClaw side at cron creation time, not in Dispatch. Dispatch is a passive receiver -- if nothing POSTs to it, nothing plays.
 
+### Broadcast mode ("hey all")
+
+A configurable broadcast wake phrase (default `"hey all"`, set via `broadcast_wake_phrase` in `agents.yaml` settings) fans out a single command to every connected agent simultaneously.
+
+**Broadcast flow:**
+1. User says "hey all, what's your status?" (or types it in debug mode)
+2. The broadcast wake phrase is matched (index = `len(config.agents)`, a synthetic index after all individual agents)
+3. Each agent receives the transcript prefixed with `"Respond in exactly one sentence. "`
+4. Requests are sent concurrently via `asyncio.gather(..., return_exceptions=True)`
+5. Each response is hard-clamped to one sentence (`_limit_to_one_sentence()` in `main.py`)
+6. Responses are spoken back-to-back: `"{agent.name} says: {clamped_response}"`
+7. If an agent fails, its slot says `"{agent.name} is not responding"` and the others still play
+
+**Checkin shortcut:** "hey all checkin" (also "check in", "checking in") skips the agent backends entirely. Each agent announces itself locally: `"{agent.name} checking in"` in its own voice. No network calls.
+
+**Pipeline integration:**
+- `DebugPipeline` appends the broadcast phrase to `_wake_phrases` in `__init__`, so typing "hey all" in debug mode returns the correct synthetic index
+- `STTWakePipeline` receives the broadcast phrase as an extra entry in the `wake_phrases` list (constructed in `main.py`)
+- `AudioPipeline` (Picovoice) does not support broadcast (would require a dedicated `.ppn` model)
+
 ### Debug mode
 
 `--debug` swaps `AudioPipeline` for `DebugPipeline` (Enter key simulates wake word) and `stream_transcribe` for `debug_transcribe` (typed input). Same interfaces, so `main.py` never branches. Runs the full pipeline without Picovoice or Google Cloud accounts.
@@ -113,7 +133,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 
 | File | Owns |
 |---|---|
-| `dispatch/main.py` | Hotkey toggle, system tray, main voice-command loop, shutdown |
+| `dispatch/main.py` | Hotkey toggle, system tray, main voice-command loop, broadcast fan-out, shutdown |
 | `dispatch/audio.py` | `AudioPipeline` (pvrecorder + Porcupine), `STTWakePipeline` (pvrecorder + Google STT), `DebugPipeline`, chime generation |
 | `dispatch/stt.py` | `stream_transcribe` (Google Cloud STT streaming), `debug_transcribe` (typed input) |
 | `dispatch/tts.py` | `speak()` -- multi-provider TTS (OpenAI, ElevenLabs, Google Cloud, Edge), pipelined sentence-by-sentence, auto-fallback |
@@ -125,7 +145,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/crypto.py` | Ed25519 device identity for OpenClaw gateway handshake |
 | `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
-| `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice (provider prefix), fallback voice |
+| `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice (provider prefix), fallback voice. Settings: hotkey, audio device, log level, webhook port, broadcast wake phrase |
 | `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `ANTHEM_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
@@ -398,7 +418,7 @@ Each agent specifies `voice` (primary, may be paid) and `fallback_voice` (free E
 | Agent | Primary Voice | Fallback | Character |
 |---|---|---|---|
 | Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` | Warm, expressive female |
-| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` | Same voice, task management |
+| Anthem (Orchestrator) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` | Distinct voice, task management |
 
 Full Edge TTS catalog: `edge-tts --list-voices`. Swap any voice by editing `agents.yaml`.
 
