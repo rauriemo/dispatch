@@ -20,10 +20,17 @@ agents:
     token_env: ANTHEM_TOKEN
     voice: google/en-US-Chirp3-HD-Algieba
     fallback_voice: en-US-AndrewNeural
-  dispatch-dev:
+  dispatch:
     type: anthem
     wake_word: assets/hey-dispatch.ppn
     endpoint: ws://localhost:8082
     token_env: DISPATCH_ANTHEM_TOKEN
     voice: google/en-US-Chirp3-HD-Charon
     fallback_voice: en-US-BrianNeural
+  rebel-tower:
+    type: anthem
+    wake_word: assets/hey-rebel-tower.ppn
+    endpoint: ws://localhost:8083
+    token_env: REBELTOWER_ANTHEM_TOKEN
+    voice: google/en-US-Chirp3-HD-Leda
+    fallback_voice: en-US-DavisNeural

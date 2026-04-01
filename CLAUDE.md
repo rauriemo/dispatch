@@ -146,7 +146,7 @@ The frame queue is **stdlib `queue.Queue`**, not `asyncio.Queue`. Both the audio
 | `dispatch/webhook.py` | `aiohttp.web` server -- `POST /notify` endpoint for cron/scheduled delivery |
 | `dispatch/__main__.py` | Entry point, parses `--debug` flag |
 | `agents.yaml` | Agent registry: type, wake word path, wake phrase, endpoint, token env var, TTS voice (provider prefix), fallback voice. Settings: hotkey, audio device, log level, webhook port, broadcast wake phrase |
-| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `ANTHEM_TOKEN`, `DISPATCH_ANTHEM_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
+| `.env` | Secrets (gitignored): `PICOVOICE_ACCESS_KEY`, `OPENCLAW_TOKEN`, `ANTHEM_TOKEN`, `DISPATCH_ANTHEM_TOKEN`, `REBELTOWER_ANTHEM_TOKEN`, `GOOGLE_APPLICATION_CREDENTIALS`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `DISPATCH_WEBHOOK_SECRET` |
 
 ## How to run
 
@@ -419,7 +419,8 @@ Each agent specifies `voice` (primary, may be paid) and `fallback_voice` (free E
 |---|---|---|---|
 | Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` | Warm, expressive female |
 | Anthem (Anthem repo) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` | Distinct voice, task management |
-| Dispatch-dev (Dispatch repo) | `google/en-US-Chirp3-HD-Charon` | `en-US-BrianNeural` | Deep, separate from other agents |
+| Dispatch (Dispatch repo) | `google/en-US-Chirp3-HD-Charon` | `en-US-BrianNeural` | Deep, separate from other agents |
+| RebelTower (Unity game) | `google/en-US-Chirp3-HD-Leda` | `en-US-DavisNeural` | Distinct voice, game dev tasks |
 
 Full Edge TTS catalog: `edge-tts --list-voices`. Swap any voice by editing `agents.yaml`.
 
