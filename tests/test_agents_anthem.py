@@ -90,13 +90,16 @@ class TestConnect:
             await agent.connect()
 
         assert agent._ws is None
-        assert agent._recv_task is None
+        assert agent._recv_task is not None
+        await agent.disconnect()
 
     async def test_connect_network_error_degrades(self, agent):
         with patch("dispatch.agents.anthem.websockets.connect", AsyncMock(side_effect=OSError("refused"))):
             await agent.connect()
 
         assert agent._ws is None
+        assert agent._recv_task is not None
+        await agent.disconnect()
 
     async def test_connect_auth_timeout_degrades(self, agent):
         mock_ws = AsyncMock()
@@ -108,6 +111,8 @@ class TestConnect:
             await agent.connect()
 
         assert agent._ws is None
+        assert agent._recv_task is not None
+        await agent.disconnect()
 
 
 # -- Send ----------------------------------------------------------------------

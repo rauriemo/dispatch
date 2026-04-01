@@ -14,6 +14,7 @@ from dispatch.audio import (
     PipelineState,
     DebugPipeline,
     _generate_chime,
+    _is_expected_stt_rollover,
     MIXER_RATE,
     CHIME_DURATION_MS,
 )
@@ -151,3 +152,13 @@ class TestDebugPipeline:
         with DebugPipeline(sample_config) as pipeline:
             assert pipeline is not None
             assert hasattr(pipeline, "listen")
+
+
+class TestSTTRollover:
+    def test_expected_rollover_detected(self):
+        exc = RuntimeError("400 Exceeded maximum allowed stream duration of 305 seconds.")
+        assert _is_expected_stt_rollover(exc) is True
+
+    def test_unexpected_error_not_detected(self):
+        exc = RuntimeError("permission denied")
+        assert _is_expected_stt_rollover(exc) is False

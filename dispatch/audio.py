@@ -21,6 +21,11 @@ CHIME_DURATION_MS = 150
 MIXER_RATE = 44100
 
 
+def _is_expected_stt_rollover(exc: Exception) -> bool:
+    """Google STT streams expire after about 305 seconds and should be restarted."""
+    return "Exceeded maximum allowed stream duration" in str(exc)
+
+
 class PipelineState(enum.Enum):
     LISTENING = "listening"
     RECORDING = "recording"
@@ -266,7 +271,11 @@ class STTWakePipeline:
                 logger.debug("Starting STT wake stream...")
                 matched = self._run_stt_stream()
                 backoff = 1
-            except Exception:
+            except Exception as exc:
+                if _is_expected_stt_rollover(exc):
+                    logger.info("STT wake stream reached Google duration limit, restarting")
+                    backoff = 1
+                    continue
                 logger.warning("STT wake stream error, retrying in %ds", backoff, exc_info=True)
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 30)

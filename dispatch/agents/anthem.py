@@ -38,6 +38,20 @@ _SEND_TIMEOUT = 120.0
 _MAX_BACKOFF = 30
 
 
+def _is_expected_connect_failure(exc: Exception) -> bool:
+    """Return True for startup-order failures that should log cleanly."""
+    return isinstance(
+        exc,
+        (
+            AgentError,
+            OSError,
+            asyncio.TimeoutError,
+            websockets.InvalidHandshake,
+            websockets.InvalidURI,
+        ),
+    )
+
+
 class AnthemAgent(BaseAgent):
     def __init__(self, name: str, voice: str, endpoint: str, token_env: str) -> None:
         super().__init__(name, voice)
@@ -67,20 +81,28 @@ class AnthemAgent(BaseAgent):
         try:
             self._ws = await websockets.connect(self._ws_uri)
             await self._authenticate()
-            self._recv_task = asyncio.create_task(self._recv_loop())
             logger.info("Anthem connected to %s", self._ws_uri)
-        except Exception:
-            logger.warning(
-                "Anthem connection failed at %s -- agent degraded",
-                self._ws_uri,
-                exc_info=True,
-            )
+        except Exception as exc:
             if self._ws is not None:
                 try:
                     await self._ws.close()
                 except Exception:
                     pass
             self._ws = None
+            if _is_expected_connect_failure(exc):
+                logger.warning(
+                    "Anthem unavailable at %s: %s -- agent degraded, retrying in background",
+                    self._ws_uri,
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "Anthem connection failed at %s -- agent degraded, retrying in background",
+                    self._ws_uri,
+                    exc_info=True,
+                )
+        if self._recv_task is None or self._recv_task.done():
+            self._recv_task = asyncio.create_task(self._recv_loop())
 
     async def send(self, text: str) -> str:
         if self._ws is None:
@@ -180,8 +202,11 @@ class AnthemAgent(BaseAgent):
                     self._ws = await websockets.connect(self._ws_uri)
                     await self._authenticate()
                     logger.info("Anthem reconnected to %s", self._ws_uri)
-                except Exception:
-                    logger.warning("Anthem reconnect failed", exc_info=True)
+                except Exception as exc:
+                    if _is_expected_connect_failure(exc):
+                        logger.warning("Anthem reconnect failed: %s", exc)
+                    else:
+                        logger.warning("Anthem reconnect failed", exc_info=True)
                     if self._ws is not None:
                         try:
                             await self._ws.close()
