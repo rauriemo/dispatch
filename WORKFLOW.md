@@ -45,6 +45,9 @@ channels:
   - kind: dispatch
     target: "localhost:8082"
     events: [task.completed, task.failed, wave.completed, maintenance.suggested]
+  - kind: prism
+    target: "localhost:3104"
+    events: [task.completed, task.failed, wave.completed, maintenance.suggested]
 
 system:
   workflow_changes_require_approval: true
