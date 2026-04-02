@@ -270,6 +270,43 @@ class TestHandleResponse:
         result = await fut
         assert result == "No response received."
 
+    async def test_ack_response_does_not_resolve_future(self, agent):
+        req_id = "req-ack-1"
+        fut = asyncio.get_running_loop().create_future()
+        agent._pending[req_id] = fut
+
+        agent._handle_response({
+            "type": "res",
+            "id": req_id,
+            "ack": True,
+        })
+
+        assert not fut.done(), "ack should not resolve the pending future"
+        assert req_id in agent._pending, "pending entry should be preserved for followup"
+
+    async def test_ack_then_followup_resolves_future(self, agent):
+        req_id = "req-ack-2"
+        fut = asyncio.get_running_loop().create_future()
+        agent._pending[req_id] = fut
+
+        agent._handle_response({
+            "type": "res",
+            "id": req_id,
+            "ack": True,
+        })
+
+        assert not fut.done()
+
+        await agent._handle_event({
+            "type": "event",
+            "event": "channel.followup",
+            "thread": req_id,
+            "text": "Sure, scaffolding prism now.",
+        })
+
+        result = await fut
+        assert result == "Sure, scaffolding prism now."
+
 
 # -- Event handling ------------------------------------------------------------
 
@@ -346,6 +383,52 @@ class TestHandleEvent:
             "event": "task.completed",
             "text": "Task finished",
         })
+
+    async def test_followup_with_matching_thread_resolves_future(self, agent):
+        queue = NotificationQueue()
+        agent._notification_queue = queue
+
+        req_id = "req-followup-1"
+        fut = asyncio.get_running_loop().create_future()
+        agent._pending[req_id] = fut
+
+        await agent._handle_event({
+            "type": "event",
+            "event": "channel.followup",
+            "thread": req_id,
+            "text": "Here is the real response.",
+        })
+
+        result = await fut
+        assert result == "Here is the real response."
+        assert queue.empty(), "followup should not be queued as notification"
+
+    async def test_followup_without_thread_queues_notification(self, agent):
+        queue = NotificationQueue()
+        agent._notification_queue = queue
+
+        await agent._handle_event({
+            "type": "event",
+            "event": "channel.followup",
+            "text": "Unsolicited followup.",
+        })
+
+        notif = queue.get_nowait()
+        assert notif.text == "Unsolicited followup."
+
+    async def test_followup_with_unknown_thread_queues_notification(self, agent):
+        queue = NotificationQueue()
+        agent._notification_queue = queue
+
+        await agent._handle_event({
+            "type": "event",
+            "event": "channel.followup",
+            "thread": "no-such-request",
+            "text": "Stale followup.",
+        })
+
+        notif = queue.get_nowait()
+        assert notif.text == "Stale followup."
 
 
 # -- Subscribe -----------------------------------------------------------------

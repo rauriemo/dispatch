@@ -9,8 +9,12 @@ Protocol reference (JSON text frames):
   Client -> Server: {"type":"auth","token":"<bearer>","client":"dispatch"}
   Server -> Client: {"type":"auth_ok"} | {"type":"auth_fail","error":"..."}
   Client -> Server: {"type":"req","id":"<uuid>","text":"..."}
-  Server -> Client: {"type":"res","id":"<uuid>","text":"..."}
-  Server -> Client: {"type":"event","event":"<name>","text":"..."}
+  Server -> Client: {"type":"res","id":"<uuid>","text":"...","ack":bool}
+  Server -> Client: {"type":"event","event":"<name>","text":"...","thread":"<id>"}
+
+When ack=true on a res frame, the server is signaling that processing has
+started but the real response will follow as a channel.followup event.
+The followup carries a "thread" field to correlate back to the pending request.
 """
 
 from __future__ import annotations
@@ -222,6 +226,9 @@ class AnthemAgent(BaseAgent):
         req_id = msg.get("id")
         if not req_id or req_id not in self._pending:
             return
+        if msg.get("ack"):
+            logger.debug("Anthem ack received for %s", req_id)
+            return
         fut = self._pending[req_id]
         if msg.get("error"):
             if not fut.done():
@@ -235,6 +242,14 @@ class AnthemAgent(BaseAgent):
         if not text:
             return
         event_type = msg.get("event", "event")
+
+        thread_id = msg.get("thread", "")
+        if event_type == "channel.followup" and thread_id and thread_id in self._pending:
+            fut = self._pending[thread_id]
+            if not fut.done():
+                fut.set_result(text)
+            return
+
         priority = 0 if event_type in ("task.failed", "maintenance.suggested") else 1
         await self._enqueue_notification(text, priority)
 
