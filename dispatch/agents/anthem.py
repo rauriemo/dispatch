@@ -198,7 +198,7 @@ class AnthemAgent(BaseAgent):
                 self._ws = None
                 self._fail_pending()
 
-                logger.info("Reconnecting Anthem in %ds...", backoff)
+                logger.debug("Reconnecting Anthem in %ds...", backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _MAX_BACKOFF)
 
@@ -208,9 +208,9 @@ class AnthemAgent(BaseAgent):
                     logger.info("Anthem reconnected to %s", self._ws_uri)
                 except Exception as exc:
                     if _is_expected_connect_failure(exc):
-                        logger.warning("Anthem reconnect failed: %s", exc)
+                        logger.debug("Anthem reconnect failed: %s", exc)
                     else:
-                        logger.warning("Anthem reconnect failed", exc_info=True)
+                        logger.debug("Anthem reconnect failed", exc_info=True)
                     if self._ws is not None:
                         try:
                             await self._ws.close()
