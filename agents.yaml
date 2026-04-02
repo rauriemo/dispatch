@@ -1,10 +1,9 @@
 settings:
-  hotkey: "<ctrl>+<shift>+n"
+  hotkey: <ctrl>+<shift>+n
   audio_device: 2
   log_level: INFO
   webhook_port: 18790
-  broadcast_wake_phrase: "hey all"
-
+  broadcast_wake_phrase: hey all
 agents:
   navi:
     type: openclaw
@@ -41,3 +40,10 @@ agents:
     token_env: FORGE_ANTHEM_TOKEN
     voice: google/en-US-Chirp3-HD-Aoede
     fallback_voice: en-US-EmmaNeural
+  prism:
+    type: anthem
+    wake_word: assets/hey-prism.ppn
+    endpoint: ws://localhost:8085
+    token_env: PRISM_ANTHEM_TOKEN
+    voice: google/en-US-Chirp3-HD-Puck
+    fallback_voice: en-US-GuyNeural
