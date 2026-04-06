@@ -66,7 +66,7 @@ flowchart LR
     Navi["OpenClawAgent\n(hey navi)"]
     Anthem["Anthem on Anthem repo\n(hey anthem)"]
     Dispatch["Anthem on Dispatch repo\n(hey dispatch)"]
-    RebelTower["Anthem on RebelTower\n(hey rebel tower)"]
+    MyProject["Anthem on your project\n(hey my-project)"]
   end
 
   Hotkey -->|"on/off"| Pipeline
@@ -75,11 +75,11 @@ flowchart LR
   STT -->|"transcript"| Navi
   STT -.->|"transcript"| Anthem
   STT -.->|"transcript"| Dispatch
-  STT -.->|"transcript"| RebelTower
+  STT -.->|"transcript"| MyProject
   Navi -->|"response"| TTS
   Anthem -.->|"response"| TTS
   Dispatch -.->|"response"| TTS
-  RebelTower -.->|"response"| TTS
+  MyProject -.->|"response"| TTS
   TTS -->|"audio"| Speaker
   Navi -.->|"push notification"| Tray
 ```
@@ -223,7 +223,7 @@ PICOVOICE_ACCESS_KEY=your-picovoice-access-key
 OPENCLAW_TOKEN=your-openclaw-gateway-token
 ANTHEM_TOKEN=your-anthem-shared-secret       # shared with Anthem's channels.yaml (Anthem repo)
 DISPATCH_ANTHEM_TOKEN=your-dispatch-secret    # shared with Anthem's channels.yaml (Dispatch repo)
-REBELTOWER_ANTHEM_TOKEN=your-rebeltower-secret  # shared with Anthem's channels.yaml (RebelTower)
+MY_PROJECT_ANTHEM_TOKEN=your-project-secret      # shared with Anthem's channels.yaml (your project)
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 OPENAI_API_KEY=sk-...                 # optional, for openai/ TTS voices
 ELEVENLABS_API_KEY=...                # optional, for elevenlabs/ TTS voices
@@ -315,7 +315,7 @@ Voices use a provider prefix format. Supported providers:
 | Navi (OpenClaw) | `google/en-US-Chirp3-HD-Erinome` | `en-US-AvaMultilingualNeural` |
 | Anthem (Anthem repo) | `google/en-US-Chirp3-HD-Algieba` | `en-US-AndrewNeural` |
 | Dispatch (Dispatch repo) | `google/en-US-Chirp3-HD-Charon` | `en-US-BrianNeural` |
-| RebelTower (Unity game) | `google/en-US-Chirp3-HD-Leda` | `en-US-DavisNeural` |
+| Your Project | `google/en-US-Chirp3-HD-Leda` | `en-US-DavisNeural` |
 
 If the primary provider fails (missing key, rate limit), each sentence automatically falls back to the Edge TTS voice. Run `edge-tts --list-voices` for the full free voice catalog.
 
