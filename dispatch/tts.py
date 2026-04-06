@@ -20,17 +20,18 @@ import pygame
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_RE = re.compile(r'(?<=[.!?…])\s+|(?<=\n)\s*')
+_SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+|(?<=\n)\s*")
 
 _warned_providers: set[str] = set()
 
 
 # -- Text cleaning / splitting ------------------------------------------------
 
+
 def _clean_for_speech(text: str) -> str:
     """Strip emoji and markdown that don't sound good in TTS."""
-    text = re.sub(r'[\U0001f300-\U0001f9ff]', '', text)
-    text = text.replace('**', '').replace('__', '').strip()
+    text = re.sub(r"[\U0001f300-\U0001f9ff]", "", text)
+    text = text.replace("**", "").replace("__", "").strip()
     return text
 
 
@@ -41,6 +42,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 # -- Voice parsing -------------------------------------------------------------
+
 
 def parse_voice(voice: str) -> tuple[str, str]:
     """Split a prefixed voice string into (provider, voice_name).
@@ -60,6 +62,7 @@ def parse_voice(voice: str) -> tuple[str, str]:
 
 
 # -- Provider synthesizers -----------------------------------------------------
+
 
 async def _synthesize_edge(text: str, voice_name: str) -> BytesIO | None:
     """Synthesize via Edge TTS (free, no API key)."""
@@ -149,6 +152,7 @@ async def _synthesize_google(text: str, voice_name: str) -> BytesIO | None:
 
 # -- Synthesis dispatcher with fallback ----------------------------------------
 
+
 def _get_synth_fn(provider: str):
     """Look up the synthesizer function for a provider at call time."""
     return {
@@ -190,6 +194,7 @@ async def _synthesize(
 
 # -- Playback ------------------------------------------------------------------
 
+
 async def _play(buffer: BytesIO) -> None:
     """Load a BytesIO MP3 buffer into pygame and wait for playback to finish."""
     pygame.mixer.music.load(buffer, "mp3")
@@ -199,6 +204,7 @@ async def _play(buffer: BytesIO) -> None:
 
 
 # -- Public API ----------------------------------------------------------------
+
 
 async def speak(text: str, voice: str, fallback_voice: str = "") -> None:
     """Synthesize and play text sentence-by-sentence in a pipeline.

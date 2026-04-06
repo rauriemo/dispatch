@@ -1,13 +1,12 @@
 """Tests for dispatch.tts -- voice parsing, provider routing, fallback, playback."""
 
-import asyncio
 from io import BytesIO
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import dispatch.tts
-from dispatch.tts import speak, parse_voice, _clean_for_speech, _split_sentences
+from dispatch.tts import _clean_for_speech, _split_sentences, parse_voice, speak
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +15,7 @@ def _clear_warned_providers():
 
 
 # -- Voice parsing -------------------------------------------------------------
+
 
 class TestParseVoice:
     def test_openai_prefix(self):
@@ -28,10 +28,16 @@ class TestParseVoice:
         assert parse_voice("google/en-US-Neural2-F") == ("google", "en-US-Neural2-F")
 
     def test_edge_prefix(self):
-        assert parse_voice("edge/en-US-AvaMultilingualNeural") == ("edge", "en-US-AvaMultilingualNeural")
+        assert parse_voice("edge/en-US-AvaMultilingualNeural") == (
+            "edge",
+            "en-US-AvaMultilingualNeural",
+        )
 
     def test_no_prefix_defaults_to_edge(self):
-        assert parse_voice("en-US-AvaMultilingualNeural") == ("edge", "en-US-AvaMultilingualNeural")
+        assert parse_voice("en-US-AvaMultilingualNeural") == (
+            "edge",
+            "en-US-AvaMultilingualNeural",
+        )
 
     def test_unknown_prefix_defaults_to_edge(self):
         assert parse_voice("unknown/voice") == ("edge", "unknown/voice")
@@ -44,6 +50,7 @@ class TestParseVoice:
 
 
 # -- Text helpers --------------------------------------------------------------
+
 
 class TestCleanForSpeech:
     def test_strips_emoji(self):
@@ -71,6 +78,7 @@ class TestSplitSentences:
 
 
 # -- Provider routing ----------------------------------------------------------
+
 
 def _make_mock_communicate(audio_data=b"fake-mp3-data"):
     """Create a mock edge_tts.Communicate that yields audio chunks."""
@@ -166,13 +174,17 @@ class TestGoogleRoute:
 
 # -- Fallback behavior ---------------------------------------------------------
 
+
 class TestFallback:
     async def test_fallback_uses_specified_voice(self):
         """When primary provider fails, fallback_voice is used with Edge TTS."""
         mock_comm = _make_mock_communicate()
 
         with (
-            patch("dispatch.tts._synthesize_google", side_effect=RuntimeError("quota exceeded")),
+            patch(
+                "dispatch.tts._synthesize_google",
+                side_effect=RuntimeError("quota exceeded"),
+            ),
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
             patch("dispatch.tts.pygame.mixer.music.load"),
             patch("dispatch.tts.pygame.mixer.music.play"),
@@ -208,6 +220,7 @@ class TestFallback:
 
 
 # -- Playback ------------------------------------------------------------------
+
 
 class TestPlayback:
     async def test_speak_seeks_buffer_before_load(self):

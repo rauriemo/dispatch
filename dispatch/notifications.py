@@ -1,7 +1,6 @@
 """Notification dataclass and async priority queue."""
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 
 

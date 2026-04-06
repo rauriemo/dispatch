@@ -2,10 +2,9 @@
 
 import asyncio
 import json
-import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from dispatch.agents.base import AgentError
 from dispatch.agents.openclaw import OpenClawAgent
@@ -17,6 +16,7 @@ def agent(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENCLAW_TOKEN", "test-secret-token")
     with patch("dispatch.agents.openclaw.load_or_create_key") as mock_key:
         from dispatch.crypto import _generate_keypair
+
         key = _generate_keypair()
         mock_key.return_value = key
         a = OpenClawAgent(
@@ -29,20 +29,28 @@ def agent(monkeypatch, tmp_path):
 
 
 def _make_challenge(nonce="test-nonce-123", ts=1000000):
-    return json.dumps({
-        "type": "event",
-        "event": "connect.challenge",
-        "payload": {"nonce": nonce, "ts": ts},
-    })
+    return json.dumps(
+        {
+            "type": "event",
+            "event": "connect.challenge",
+            "payload": {"nonce": nonce, "ts": ts},
+        }
+    )
 
 
 def _make_hello_ok(req_id="ignored"):
-    return json.dumps({
-        "type": "res",
-        "id": req_id,
-        "ok": True,
-        "payload": {"type": "hello-ok", "protocol": 3, "policy": {"tickIntervalMs": 15000}},
-    })
+    return json.dumps(
+        {
+            "type": "res",
+            "id": req_id,
+            "ok": True,
+            "payload": {
+                "type": "hello-ok",
+                "protocol": 3,
+                "policy": {"tickIntervalMs": 15000},
+            },
+        }
+    )
 
 
 def _make_ws_mock():
@@ -50,9 +58,7 @@ def _make_ws_mock():
     mock = AsyncMock()
     mock.recv = AsyncMock(side_effect=[_make_challenge(), _make_hello_ok()])
     mock.close = AsyncMock()
-    mock.__aiter__ = MagicMock(return_value=AsyncMock(
-        __anext__=AsyncMock(side_effect=StopAsyncIteration)
-    ))
+    mock.__aiter__ = MagicMock(return_value=AsyncMock(__anext__=AsyncMock(side_effect=StopAsyncIteration)))
     sent = []
 
     async def capture_send(data):
@@ -73,8 +79,10 @@ class TestConnect:
         async def fake_connect(uri):
             return next(ws_mocks)
 
-        with patch("dispatch.agents.openclaw.websockets.connect", side_effect=fake_connect), \
-             patch.object(agent._http, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch("dispatch.agents.openclaw.websockets.connect", side_effect=fake_connect),
+            patch.object(agent._http, "get", new_callable=AsyncMock) as mock_get,
+        ):
             mock_get.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
             await agent.connect()
 
@@ -118,8 +126,10 @@ class TestConnect:
         async def fake_connect(uri):
             return mock_ws
 
-        with patch("dispatch.agents.openclaw.websockets.connect", side_effect=fake_connect), \
-             patch.object(agent._http, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch("dispatch.agents.openclaw.websockets.connect", side_effect=fake_connect),
+            patch.object(agent._http, "get", new_callable=AsyncMock) as mock_get,
+        ):
             mock_get.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
             await agent.connect()
 
@@ -136,8 +146,10 @@ class TestConnect:
         async def fake_connect(uri):
             return next(ws_mocks)
 
-        with patch("dispatch.agents.openclaw.websockets.connect", side_effect=fake_connect), \
-             patch.object(agent._http, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch("dispatch.agents.openclaw.websockets.connect", side_effect=fake_connect),
+            patch.object(agent._http, "get", new_callable=AsyncMock) as mock_get,
+        ):
             mock_get.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
             await agent.connect()
 
@@ -189,7 +201,10 @@ class TestSend:
         agent._ws = mock_ws
         mock_ws.send = AsyncMock()
 
-        with patch("dispatch.agents.openclaw.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        with patch(
+            "dispatch.agents.openclaw.asyncio.wait_for",
+            side_effect=asyncio.TimeoutError,
+        ):
             with pytest.raises(AgentError, match="timed out"):
                 await agent.send("hi")
 
@@ -227,25 +242,42 @@ class TestRecvLoop:
         fut = asyncio.get_running_loop().create_future()
         agent._pending[run_id] = fut
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "agent",
-            "payload": {"runId": run_id, "stream": "assistant", "data": {"delta": "Hello "}},
-        })
-        await agent._handle_event({
-            "type": "event",
-            "event": "agent",
-            "payload": {"runId": run_id, "stream": "assistant", "data": {"delta": "world!"}},
-        })
-        await agent._handle_event({
-            "type": "event",
-            "event": "chat",
-            "payload": {
-                "runId": run_id,
-                "state": "final",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "Hello world!"}]},
-            },
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "agent",
+                "payload": {
+                    "runId": run_id,
+                    "stream": "assistant",
+                    "data": {"delta": "Hello "},
+                },
+            }
+        )
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "agent",
+                "payload": {
+                    "runId": run_id,
+                    "stream": "assistant",
+                    "data": {"delta": "world!"},
+                },
+            }
+        )
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "chat",
+                "payload": {
+                    "runId": run_id,
+                    "state": "final",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Hello world!"}],
+                    },
+                },
+            }
+        )
 
         result = await fut
         assert result == "Hello world!"
@@ -255,15 +287,20 @@ class TestRecvLoop:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "chat",
-            "payload": {
-                "runId": "unknown-run-999",
-                "state": "final",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "Hey, just checking in!"}]},
-            },
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "chat",
+                "payload": {
+                    "runId": "unknown-run-999",
+                    "state": "final",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Hey, just checking in!"}],
+                    },
+                },
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.text == "Hey, just checking in!"
@@ -275,15 +312,17 @@ class TestRecvLoop:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "chat",
-            "payload": {
-                "runId": "unknown-run-888",
-                "state": "final",
-                "message": {"role": "assistant", "content": []},
-            },
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "chat",
+                "payload": {
+                    "runId": "unknown-run-888",
+                    "state": "final",
+                    "message": {"role": "assistant", "content": []},
+                },
+            }
+        )
 
         assert queue.empty()
 
@@ -293,12 +332,14 @@ class TestRecvLoop:
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        agent._handle_response({
-            "type": "res",
-            "id": req_id,
-            "ok": False,
-            "error": {"code": "BAD_REQUEST", "message": "bad request"},
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": req_id,
+                "ok": False,
+                "error": {"code": "BAD_REQUEST", "message": "bad request"},
+            }
+        )
 
         with pytest.raises(AgentError):
             await fut
@@ -330,12 +371,17 @@ class TestNodeInvoke:
 
         agent._node_ws.send = capture
 
-        await agent._handle_invoke({
-            "type": "req",
-            "id": "invoke-123",
-            "method": "invoke",
-            "params": {"command": "voice.speak", "args": {"text": "Time for lunch!"}},
-        })
+        await agent._handle_invoke(
+            {
+                "type": "req",
+                "id": "invoke-123",
+                "method": "invoke",
+                "params": {
+                    "command": "voice.speak",
+                    "args": {"text": "Time for lunch!"},
+                },
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.text == "Time for lunch!"
@@ -356,12 +402,14 @@ class TestNodeInvoke:
 
         agent._node_ws.send = capture
 
-        await agent._handle_invoke({
-            "type": "req",
-            "id": "invoke-456",
-            "method": "invoke",
-            "params": {"command": "camera.snap", "args": {}},
-        })
+        await agent._handle_invoke(
+            {
+                "type": "req",
+                "id": "invoke-456",
+                "method": "invoke",
+                "params": {"command": "camera.snap", "args": {}},
+            }
+        )
 
         assert len(sent) == 1
         assert sent[0]["ok"] is False
@@ -377,12 +425,14 @@ class TestNodeInvoke:
 
         agent._node_ws.send = capture
 
-        await agent._handle_invoke({
-            "type": "req",
-            "id": "invoke-789",
-            "method": "invoke",
-            "params": {"command": "voice.speak", "args": {"text": "Hello"}},
-        })
+        await agent._handle_invoke(
+            {
+                "type": "req",
+                "id": "invoke-789",
+                "method": "invoke",
+                "params": {"command": "voice.speak", "args": {"text": "Hello"}},
+            }
+        )
 
         assert len(sent) == 1
         assert sent[0]["ok"] is True
@@ -400,12 +450,14 @@ class TestNodeInvoke:
 
         agent._node_ws.send = capture
 
-        await agent._handle_invoke({
-            "type": "req",
-            "id": "invoke-000",
-            "method": "invoke",
-            "params": {"command": "voice.speak", "args": {"text": ""}},
-        })
+        await agent._handle_invoke(
+            {
+                "type": "req",
+                "id": "invoke-000",
+                "method": "invoke",
+                "params": {"command": "voice.speak", "args": {"text": ""}},
+            }
+        )
 
         assert queue.empty()
         assert len(sent) == 1

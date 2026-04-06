@@ -3,15 +3,12 @@
 import asyncio
 import textwrap
 import threading
-
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dispatch.agents.base import AgentError, AgentRouter
 from dispatch.agents.openclaw import OpenClawAgent
-from dispatch.audio import DebugPipeline, PipelineState
-from dispatch.config import AgentConfig, DispatchConfig, load_config
-from dispatch.notifications import NotificationQueue
+from dispatch.audio import DebugPipeline
+from dispatch.config import load_config
 from dispatch.tts import speak
 
 
@@ -53,8 +50,10 @@ class TestDebugFullCycle:
 
         # Speak response (mock TTS)
         mock_comm = MagicMock()
+
         async def mock_stream():
             yield {"type": "audio", "data": b"fake"}
+
         mock_comm.return_value.stream = mock_stream
 
         with (

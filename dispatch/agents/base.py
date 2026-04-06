@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,7 +47,7 @@ class AgentRouter:
         cls.REGISTRY[type_name] = agent_cls
 
     def __init__(self, agent_configs: list) -> None:
-        from dispatch.config import AgentConfig, PROJECT_ROOT
+        from dispatch.config import PROJECT_ROOT, AgentConfig
 
         self.agents: list[BaseAgent] = []
         self._ppn_paths: list[str] = []
@@ -83,7 +81,11 @@ class AgentRouter:
                 await agent.connect()
                 logger.info("Agent '%s' connected", agent.name)
             except Exception:
-                logger.warning("Agent '%s' failed to connect -- degraded", agent.name, exc_info=True)
+                logger.warning(
+                    "Agent '%s' failed to connect -- degraded",
+                    agent.name,
+                    exc_info=True,
+                )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

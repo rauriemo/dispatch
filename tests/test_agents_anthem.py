@@ -2,12 +2,12 @@
 
 import asyncio
 import json
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from dispatch.agents.base import AgentError
+import pytest
+
 from dispatch.agents.anthem import AnthemAgent
+from dispatch.agents.base import AgentError
 from dispatch.notifications import NotificationQueue
 
 
@@ -29,9 +29,7 @@ def _make_ws_mock(auth_response=None):
         auth_response = {"type": "auth_ok"}
     mock.recv = AsyncMock(return_value=json.dumps(auth_response))
     mock.close = AsyncMock()
-    mock.__aiter__ = MagicMock(return_value=AsyncMock(
-        __anext__=AsyncMock(side_effect=StopAsyncIteration)
-    ))
+    mock.__aiter__ = MagicMock(return_value=AsyncMock(__anext__=AsyncMock(side_effect=StopAsyncIteration)))
     sent = []
 
     async def capture_send(data):
@@ -43,6 +41,7 @@ def _make_ws_mock(auth_response=None):
 
 
 # -- URI parsing ---------------------------------------------------------------
+
 
 class TestURIParsing:
     def test_ws_uri_passthrough(self, agent):
@@ -65,6 +64,7 @@ class TestURIParsing:
 
 
 # -- Connect -------------------------------------------------------------------
+
 
 class TestConnect:
     async def test_connect_sends_auth_and_starts_recv(self, agent):
@@ -94,7 +94,10 @@ class TestConnect:
         await agent.disconnect()
 
     async def test_connect_network_error_degrades(self, agent):
-        with patch("dispatch.agents.anthem.websockets.connect", AsyncMock(side_effect=OSError("refused"))):
+        with patch(
+            "dispatch.agents.anthem.websockets.connect",
+            AsyncMock(side_effect=OSError("refused")),
+        ):
             await agent.connect()
 
         assert agent._ws is None
@@ -116,6 +119,7 @@ class TestConnect:
 
 
 # -- Send ----------------------------------------------------------------------
+
 
 class TestSend:
     async def test_send_raises_when_not_connected(self, agent):
@@ -170,15 +174,15 @@ class TestSend:
         agent._ws = mock_ws
 
         import websockets
-        mock_ws.send = AsyncMock(
-            side_effect=websockets.ConnectionClosed(None, None)
-        )
+
+        mock_ws.send = AsyncMock(side_effect=websockets.ConnectionClosed(None, None))
 
         with pytest.raises(AgentError, match="closed"):
             await agent.send("hello")
 
 
 # -- Disconnect ----------------------------------------------------------------
+
 
 class TestDisconnect:
     async def test_disconnect_closes_ws(self, agent):
@@ -221,17 +225,20 @@ class TestDisconnect:
 
 # -- Response handling ---------------------------------------------------------
 
+
 class TestHandleResponse:
     async def test_response_resolves_pending_future(self, agent):
         req_id = "req-123"
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        agent._handle_response({
-            "type": "res",
-            "id": req_id,
-            "text": "Task dispatched successfully.",
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": req_id,
+                "text": "Task dispatched successfully.",
+            }
+        )
 
         result = await fut
         assert result == "Task dispatched successfully."
@@ -241,31 +248,37 @@ class TestHandleResponse:
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        agent._handle_response({
-            "type": "res",
-            "id": req_id,
-            "error": "orchestrator unavailable",
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": req_id,
+                "error": "orchestrator unavailable",
+            }
+        )
 
         with pytest.raises(AgentError, match="orchestrator unavailable"):
             await fut
 
     async def test_response_unknown_id_ignored(self, agent):
-        agent._handle_response({
-            "type": "res",
-            "id": "unknown-id",
-            "text": "orphan response",
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": "unknown-id",
+                "text": "orphan response",
+            }
+        )
 
     async def test_response_missing_text_uses_default(self, agent):
         req_id = "req-789"
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        agent._handle_response({
-            "type": "res",
-            "id": req_id,
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": req_id,
+            }
+        )
 
         result = await fut
         assert result == "No response received."
@@ -275,11 +288,13 @@ class TestHandleResponse:
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        agent._handle_response({
-            "type": "res",
-            "id": req_id,
-            "ack": True,
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": req_id,
+                "ack": True,
+            }
+        )
 
         assert not fut.done(), "ack should not resolve the pending future"
         assert req_id in agent._pending, "pending entry should be preserved for followup"
@@ -289,20 +304,24 @@ class TestHandleResponse:
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        agent._handle_response({
-            "type": "res",
-            "id": req_id,
-            "ack": True,
-        })
+        agent._handle_response(
+            {
+                "type": "res",
+                "id": req_id,
+                "ack": True,
+            }
+        )
 
         assert not fut.done()
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "channel.followup",
-            "thread": req_id,
-            "text": "Sure, scaffolding prism now.",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "channel.followup",
+                "thread": req_id,
+                "text": "Sure, scaffolding prism now.",
+            }
+        )
 
         result = await fut
         assert result == "Sure, scaffolding prism now."
@@ -310,16 +329,19 @@ class TestHandleResponse:
 
 # -- Event handling ------------------------------------------------------------
 
+
 class TestHandleEvent:
     async def test_task_completed_queues_notification(self, agent):
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "task.completed",
-            "text": "Task GH-42 completed: Add CONTRIBUTING.md ($0.058)",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "task.completed",
+                "text": "Task GH-42 completed: Add CONTRIBUTING.md ($0.058)",
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.text == "Task GH-42 completed: Add CONTRIBUTING.md ($0.058)"
@@ -330,11 +352,13 @@ class TestHandleEvent:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "task.failed",
-            "text": "Task GH-99 failed after 3 retries",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "task.failed",
+                "text": "Task GH-99 failed after 3 retries",
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.priority == 0
@@ -343,11 +367,13 @@ class TestHandleEvent:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "maintenance.suggested",
-            "text": "3 failures in 24h on label 'bug'",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "maintenance.suggested",
+                "text": "3 failures in 24h on label 'bug'",
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.priority == 0
@@ -356,11 +382,13 @@ class TestHandleEvent:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "wave.completed",
-            "text": "Wave 2 complete, 4 tasks done",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "wave.completed",
+                "text": "Wave 2 complete, 4 tasks done",
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.priority == 1
@@ -369,20 +397,24 @@ class TestHandleEvent:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "task.completed",
-            "text": "",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "task.completed",
+                "text": "",
+            }
+        )
 
         assert queue.empty()
 
     async def test_event_without_queue_logs_warning(self, agent):
-        await agent._handle_event({
-            "type": "event",
-            "event": "task.completed",
-            "text": "Task finished",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "task.completed",
+                "text": "Task finished",
+            }
+        )
 
     async def test_followup_with_matching_thread_resolves_future(self, agent):
         queue = NotificationQueue()
@@ -392,12 +424,14 @@ class TestHandleEvent:
         fut = asyncio.get_running_loop().create_future()
         agent._pending[req_id] = fut
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "channel.followup",
-            "thread": req_id,
-            "text": "Here is the real response.",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "channel.followup",
+                "thread": req_id,
+                "text": "Here is the real response.",
+            }
+        )
 
         result = await fut
         assert result == "Here is the real response."
@@ -407,11 +441,13 @@ class TestHandleEvent:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "channel.followup",
-            "text": "Unsolicited followup.",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "channel.followup",
+                "text": "Unsolicited followup.",
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.text == "Unsolicited followup."
@@ -420,18 +456,21 @@ class TestHandleEvent:
         queue = NotificationQueue()
         agent._notification_queue = queue
 
-        await agent._handle_event({
-            "type": "event",
-            "event": "channel.followup",
-            "thread": "no-such-request",
-            "text": "Stale followup.",
-        })
+        await agent._handle_event(
+            {
+                "type": "event",
+                "event": "channel.followup",
+                "thread": "no-such-request",
+                "text": "Stale followup.",
+            }
+        )
 
         notif = queue.get_nowait()
         assert notif.text == "Stale followup."
 
 
 # -- Subscribe -----------------------------------------------------------------
+
 
 class TestSubscribe:
     async def test_subscribe_stores_queue(self, agent):

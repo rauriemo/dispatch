@@ -24,7 +24,8 @@ def _create_app(
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {secret}":
                 return web.json_response(
-                    {"ok": False, "error": "unauthorized"}, status=401,
+                    {"ok": False, "error": "unauthorized"},
+                    status=401,
                 )
 
         # Parse JSON
@@ -32,12 +33,14 @@ def _create_app(
             body = await request.json()
         except Exception:
             return web.json_response(
-                {"ok": False, "error": "invalid JSON"}, status=400,
+                {"ok": False, "error": "invalid JSON"},
+                status=400,
             )
 
         if not isinstance(body, dict):
             return web.json_response(
-                {"ok": False, "error": "invalid JSON"}, status=400,
+                {"ok": False, "error": "invalid JSON"},
+                status=400,
             )
 
         # Validate required fields
@@ -46,18 +49,21 @@ def _create_app(
 
         if not agent_name:
             return web.json_response(
-                {"ok": False, "error": "missing required field: agent"}, status=400,
+                {"ok": False, "error": "missing required field: agent"},
+                status=400,
             )
         if not text or not isinstance(text, str) or not text.strip():
             return web.json_response(
-                {"ok": False, "error": "missing required field: text"}, status=400,
+                {"ok": False, "error": "missing required field: text"},
+                status=400,
             )
 
         # Lookup agent voice
         voice = agent_voices.get(agent_name)
         if voice is None:
             return web.json_response(
-                {"ok": False, "error": "unknown agent"}, status=404,
+                {"ok": False, "error": "unknown agent"},
+                status=404,
             )
 
         priority = body.get("priority", 1)

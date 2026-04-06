@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 
 import websockets
 
-from dispatch.agents.base import AgentError, BaseAgent, AgentRouter
+from dispatch.agents.base import AgentError, AgentRouter, BaseAgent
 from dispatch.notifications import Notification
 
 if TYPE_CHECKING:
@@ -117,11 +117,15 @@ class AnthemAgent(BaseAgent):
         self._pending[req_id] = future
 
         try:
-            await self._ws.send(json.dumps({
-                "type": "req",
-                "id": req_id,
-                "text": text,
-            }))
+            await self._ws.send(
+                json.dumps(
+                    {
+                        "type": "req",
+                        "id": req_id,
+                        "text": text,
+                    }
+                )
+            )
             return await asyncio.wait_for(future, timeout=_SEND_TIMEOUT)
         except asyncio.TimeoutError as exc:
             raise AgentError("Anthem request timed out") from exc
@@ -151,11 +155,15 @@ class AnthemAgent(BaseAgent):
     # -- Auth ------------------------------------------------------------------
 
     async def _authenticate(self) -> None:
-        await self._ws.send(json.dumps({
-            "type": "auth",
-            "token": self._token,
-            "client": "dispatch",
-        }))
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "auth",
+                    "token": self._token,
+                    "client": "dispatch",
+                }
+            )
+        )
         raw = await asyncio.wait_for(self._ws.recv(), timeout=_AUTH_TIMEOUT)
         msg = json.loads(raw)
         if msg.get("type") == "auth_ok":

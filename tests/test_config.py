@@ -1,12 +1,10 @@
 """Tests for dispatch.config -- YAML parsing, validation, env vars."""
 
-import os
 import textwrap
 
 import pytest
-import yaml
 
-from dispatch.config import AgentConfig, DispatchConfig, load_config, _validate
+from dispatch.config import load_config
 
 
 class TestLoadConfig:

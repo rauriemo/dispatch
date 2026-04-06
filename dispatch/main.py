@@ -9,12 +9,12 @@ import pygame
 from PIL import Image, ImageDraw
 from pynput.keyboard import GlobalHotKeys
 
-from dispatch.audio import AudioPipeline, DebugPipeline, STTWakePipeline, PipelineState
-from dispatch.config import DispatchConfig, load_config
+from dispatch.agents import AgentError, AgentRouter
+from dispatch.audio import AudioPipeline, DebugPipeline, PipelineState, STTWakePipeline
+from dispatch.config import load_config
 from dispatch.notifications import NotificationQueue
 from dispatch.stt import debug_transcribe, stream_transcribe
 from dispatch.tts import speak
-from dispatch.agents import AgentError, AgentRouter
 from dispatch.webhook import WebhookServer
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,7 @@ def _is_latest_keyword(transcript: str) -> bool:
 
 # ── System tray ──────────────────────────────────────────────────────
 
+
 def _make_icon(color: str) -> Image.Image:
     """Generate a 64x64 image with a filled circle for the tray icon."""
     img = Image.new("RGB", (64, 64), "black")
@@ -91,6 +92,7 @@ def start_tray(pipeline, toggle_fn, quit_fn):
 
 # ── Hotkey ───────────────────────────────────────────────────────────
 
+
 def start_hotkey(hotkey_str: str, callback):
     """Start pynput GlobalHotKeys listener (angle-bracket format required)."""
     hotkeys = GlobalHotKeys({hotkey_str: callback})
@@ -100,6 +102,7 @@ def start_hotkey(hotkey_str: str, callback):
 
 
 # ── Main ─────────────────────────────────────────────────────────────
+
 
 def main(debug: bool = False) -> None:
     config = load_config(debug)
@@ -131,9 +134,7 @@ def main(debug: bool = False) -> None:
         tray_icon = None
 
         async with AgentRouter(config.agents) as router:
-            agent_fallbacks = {
-                ac.name: ac.fallback_voice for ac in config.agents
-            }
+            agent_fallbacks = {ac.name: ac.fallback_voice for ac in config.agents}
             notification_queue = NotificationQueue()
             for agent in router.agents:
                 await agent.subscribe(notification_queue)
@@ -143,14 +144,15 @@ def main(debug: bool = False) -> None:
             if config.webhook_port > 0:
                 agent_voices = {a.name: a.voice for a in router.agents}
                 webhook_server = WebhookServer(
-                    notification_queue, agent_voices, config.webhook_port,
+                    notification_queue,
+                    agent_voices,
+                    config.webhook_port,
                 )
                 try:
                     await webhook_server.start()
                 except OSError:
                     logger.warning(
-                        "Webhook server failed to bind on port %d -- "
-                        "scheduled delivery unavailable",
+                        "Webhook server failed to bind on port %d -- scheduled delivery unavailable",
                         config.webhook_port,
                     )
                     webhook_server = None
@@ -230,7 +232,9 @@ def main(debug: bool = False) -> None:
 
                             # "checkin" shortcut -- each agent announces itself
                             if transcript and transcript.strip().lower() in (
-                                "checkin", "check in", "checking in",
+                                "checkin",
+                                "check in",
+                                "checking in",
                             ):
                                 logger.info("Broadcast checkin")
                                 pipeline.pause()
@@ -238,7 +242,8 @@ def main(debug: bool = False) -> None:
                                     fb = agent_fallbacks.get(agent.name, "")
                                     await speak(
                                         f"{agent.name} checking in",
-                                        agent.voice, fb,
+                                        agent.voice,
+                                        fb,
                                     )
                                 pipeline.resume()
                                 continue
@@ -248,7 +253,8 @@ def main(debug: bool = False) -> None:
                                 logger.info("Broadcast latest")
                                 tasks = [a.send(_LATEST_PROMPT) for a in router.agents]
                                 results = await asyncio.gather(
-                                    *tasks, return_exceptions=True,
+                                    *tasks,
+                                    return_exceptions=True,
                                 )
                                 pipeline.pause()
                                 for agent, result in zip(router.agents, results):
@@ -256,7 +262,8 @@ def main(debug: bool = False) -> None:
                                     if isinstance(result, Exception):
                                         logger.error(
                                             "Agent '%s' failed in broadcast latest",
-                                            agent.name, exc_info=result,
+                                            agent.name,
+                                            exc_info=result,
                                         )
                                         text = f"{agent.name} is not responding"
                                     else:
@@ -272,13 +279,11 @@ def main(debug: bool = False) -> None:
                             logger.info("Broadcast transcript: %s", transcript)
 
                             # Fan out to all agents with 1-sentence limit
-                            prompt = (
-                                "Respond in exactly one sentence. "
-                                + transcript
-                            )
+                            prompt = "Respond in exactly one sentence. " + transcript
                             tasks = [a.send(prompt) for a in router.agents]
                             results = await asyncio.gather(
-                                *tasks, return_exceptions=True,
+                                *tasks,
+                                return_exceptions=True,
                             )
 
                             pipeline.pause()
@@ -287,7 +292,8 @@ def main(debug: bool = False) -> None:
                                 if isinstance(result, Exception):
                                     logger.error(
                                         "Agent '%s' failed in broadcast",
-                                        agent.name, exc_info=result,
+                                        agent.name,
+                                        exc_info=result,
                                     )
                                     text = f"{agent.name} is not responding"
                                 else:

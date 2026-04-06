@@ -1,7 +1,8 @@
 """Shared fixtures for Dispatch test suite."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from dispatch.config import AgentConfig, DispatchConfig
 

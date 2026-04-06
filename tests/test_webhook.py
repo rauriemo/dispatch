@@ -1,15 +1,12 @@
 """Tests for dispatch.webhook -- POST /notify endpoint."""
 
-import json
-
-import pytest
-from aiohttp import web
-from aiohttp.test_utils import AioHTTPTestCase, TestClient, TestServer
 from unittest.mock import patch
 
-from dispatch.notifications import NotificationQueue
-from dispatch.webhook import _create_app, WebhookServer
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
 
+from dispatch.notifications import NotificationQueue
+from dispatch.webhook import _create_app
 
 AGENT_VOICES = {"navi": "en-US-AvaMultilingualNeural", "jarvis": "en-US-EricNeural"}
 
@@ -25,6 +22,7 @@ def app(notification_queue):
     with patch.dict("os.environ", {}, clear=False):
         # Ensure DISPATCH_WEBHOOK_SECRET is unset
         import os
+
         os.environ.pop("DISPATCH_WEBHOOK_SECRET", None)
         return _create_app(notification_queue, AGENT_VOICES)
 
@@ -51,9 +49,14 @@ async def auth_client(app_with_auth):
 class TestValidPayload:
     async def test_valid_payload_queues_notification(self, client, notification_queue):
         """Valid POST /notify should return 200 and queue a notification."""
-        resp = await client.post("/notify", json={
-            "agent": "navi", "text": "Time for standup!", "priority": 1,
-        })
+        resp = await client.post(
+            "/notify",
+            json={
+                "agent": "navi",
+                "text": "Time for standup!",
+                "priority": 1,
+            },
+        )
         assert resp.status == 200
         body = await resp.json()
         assert body == {"ok": True}
@@ -66,9 +69,13 @@ class TestValidPayload:
 
     async def test_default_priority_is_one(self, client, notification_queue):
         """Omitting priority should default to 1."""
-        resp = await client.post("/notify", json={
-            "agent": "navi", "text": "Hello",
-        })
+        resp = await client.post(
+            "/notify",
+            json={
+                "agent": "navi",
+                "text": "Hello",
+            },
+        )
         assert resp.status == 200
 
         notif = notification_queue.get_nowait()
@@ -76,9 +83,14 @@ class TestValidPayload:
 
     async def test_urgent_priority(self, client, notification_queue):
         """Priority 0 should be preserved."""
-        resp = await client.post("/notify", json={
-            "agent": "jarvis", "text": "Alert!", "priority": 0,
-        })
+        resp = await client.post(
+            "/notify",
+            json={
+                "agent": "jarvis",
+                "text": "Alert!",
+                "priority": 0,
+            },
+        )
         assert resp.status == 200
 
         notif = notification_queue.get_nowait()
@@ -137,9 +149,13 @@ class TestValidation:
 class TestAuth:
     async def test_auth_required_when_secret_set(self, auth_client):
         """Missing auth header should return 401 when secret is configured."""
-        resp = await auth_client.post("/notify", json={
-            "agent": "navi", "text": "hello",
-        })
+        resp = await auth_client.post(
+            "/notify",
+            json={
+                "agent": "navi",
+                "text": "hello",
+            },
+        )
         assert resp.status == 401
         body = await resp.json()
         assert body["error"] == "unauthorized"
@@ -163,9 +179,13 @@ class TestAuth:
 
     async def test_no_auth_needed_when_secret_unset(self, client, notification_queue):
         """When DISPATCH_WEBHOOK_SECRET is not set, requests pass without auth."""
-        resp = await client.post("/notify", json={
-            "agent": "navi", "text": "hello",
-        })
+        resp = await client.post(
+            "/notify",
+            json={
+                "agent": "navi",
+                "text": "hello",
+            },
+        )
         assert resp.status == 200
 
 
@@ -182,9 +202,14 @@ class TestRouting:
 class TestEndToEnd:
     async def test_full_cycle(self, client, notification_queue):
         """Full request/response cycle: POST, check response, verify notification."""
-        resp = await client.post("/notify", json={
-            "agent": "navi", "text": "Deploy complete", "priority": 0,
-        })
+        resp = await client.post(
+            "/notify",
+            json={
+                "agent": "navi",
+                "text": "Deploy complete",
+                "priority": 0,
+            },
+        )
         assert resp.status == 200
         body = await resp.json()
         assert body["ok"] is True

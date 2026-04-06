@@ -3,16 +3,13 @@
 import asyncio
 import queue
 import sys
-import threading
-
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from dispatch.audio import PipelineState, STTWakePipeline
 from dispatch.config import _derive_wake_phrase
 
-
 # -- Wake phrase derivation from .ppn filename ---------------------------------
+
 
 class TestDeriveWakePhrase:
     def test_simple_filename(self):
@@ -35,6 +32,7 @@ class TestDeriveWakePhrase:
 
 
 # -- Wake phrase matching logic ------------------------------------------------
+
 
 def _make_pipeline_for_matching(wake_phrases):
     """Create a minimal STTWakePipeline with mocked pvrecorder for matching tests."""
@@ -133,6 +131,7 @@ class TestWakePhraseMatching:
 
 # -- STTWakePipeline behavior --------------------------------------------------
 
+
 class TestSTTWakePipeline:
     def _make_pipeline(self):
         return _make_pipeline_for_matching([("hey navi", 0)])
@@ -198,10 +197,12 @@ class TestSTTWakePipeline:
 
 # -- Config integration: wake_phrase field -------------------------------------
 
+
 class TestConfigWakePhrase:
     def test_wake_phrase_auto_derived(self, tmp_path, monkeypatch):
         """wake_phrase should be auto-derived from wake_word filename."""
         import textwrap
+
         from dispatch.config import load_config
 
         yaml_content = textwrap.dedent("""\
@@ -227,6 +228,7 @@ class TestConfigWakePhrase:
     def test_wake_phrase_explicit_override(self, tmp_path, monkeypatch):
         """Explicit wake_phrase in YAML overrides auto-derivation."""
         import textwrap
+
         from dispatch.config import load_config
 
         yaml_content = textwrap.dedent("""\

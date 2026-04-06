@@ -69,16 +69,18 @@ def load_config(debug: bool = False) -> DispatchConfig:
     for name, cfg in agents_raw.items():
         wake_word = cfg["wake_word"]
         wake_phrase = cfg.get("wake_phrase", "") or _derive_wake_phrase(wake_word)
-        agents.append(AgentConfig(
-            name=name,
-            type=cfg["type"],
-            wake_word=wake_word,
-            endpoint=cfg["endpoint"],
-            token_env=cfg["token_env"],
-            voice=cfg["voice"],
-            wake_phrase=wake_phrase,
-            fallback_voice=cfg.get("fallback_voice", ""),
-        ))
+        agents.append(
+            AgentConfig(
+                name=name,
+                type=cfg["type"],
+                wake_word=wake_word,
+                endpoint=cfg["endpoint"],
+                token_env=cfg["token_env"],
+                voice=cfg["voice"],
+                wake_phrase=wake_phrase,
+                fallback_voice=cfg.get("fallback_voice", ""),
+            )
+        )
 
     webhook_port = settings.get("webhook_port", 0)
     broadcast_wake_phrase = settings.get("broadcast_wake_phrase", "hey all")
@@ -115,7 +117,8 @@ def _validate(config: DispatchConfig) -> None:
         if not token:
             logger.warning(
                 "Env var %s not set for agent '%s' -- agent may fail at runtime",
-                agent.token_env, agent.name,
+                agent.token_env,
+                agent.name,
             )
 
         # Wake word file must exist (unless debug mode)
@@ -123,22 +126,16 @@ def _validate(config: DispatchConfig) -> None:
             ppn_path = PROJECT_ROOT / agent.wake_word
             if not ppn_path.exists():
                 logger.warning(
-                    "Wake word file %s not found for agent '%s' -- "
-                    "falling back to debug pipeline",
-                    ppn_path, agent.name,
+                    "Wake word file %s not found for agent '%s' -- falling back to debug pipeline",
+                    ppn_path,
+                    agent.name,
                 )
 
     if not config.debug:
         if not os.environ.get("PICOVOICE_ACCESS_KEY"):
             if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-                logger.warning(
-                    "PICOVOICE_ACCESS_KEY not set -- will use STT-based wake word detection"
-                )
+                logger.warning("PICOVOICE_ACCESS_KEY not set -- will use STT-based wake word detection")
             else:
-                logger.warning(
-                    "PICOVOICE_ACCESS_KEY not set -- will fall back to debug pipeline"
-                )
+                logger.warning("PICOVOICE_ACCESS_KEY not set -- will fall back to debug pipeline")
         if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            logger.warning(
-                "GOOGLE_APPLICATION_CREDENTIALS not set -- will fall back to debug STT"
-            )
+            logger.warning("GOOGLE_APPLICATION_CREDENTIALS not set -- will fall back to debug STT")

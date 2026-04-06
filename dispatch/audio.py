@@ -6,7 +6,6 @@ import enum
 import logging
 import math
 import queue
-import struct
 import threading
 import time
 from typing import Optional
@@ -31,6 +30,7 @@ def _is_expected_stt_error(exc: Exception) -> tuple[bool, str]:
     if "Exceeded maximum allowed stream duration" in msg:
         return True, "stream duration limit reached"
     from google.api_core import exceptions as gexc
+
     if isinstance(exc, (gexc.InternalServerError, gexc.ServiceUnavailable, gexc.DeadlineExceeded)):
         return True, f"transient server error ({type(exc).__name__})"
     return False, ""
@@ -61,17 +61,15 @@ class AudioPipeline:
     """
 
     def __init__(self, config) -> None:
+        import os
+
         import pvporcupine
         import pvrecorder
-        import os
 
         from dispatch.config import PROJECT_ROOT
 
         access_key = os.environ["PICOVOICE_ACCESS_KEY"]
-        ppn_paths = [
-            str(PROJECT_ROOT / agent_cfg.wake_word)
-            for agent_cfg in config.agents
-        ]
+        ppn_paths = [str(PROJECT_ROOT / agent_cfg.wake_word) for agent_cfg in config.agents]
 
         self._porcupine = pvporcupine.create(
             access_key=access_key,
@@ -204,6 +202,7 @@ class STTWakePipeline:
     def _normalize(text: str) -> str:
         """Strip punctuation and smart quotes so 'na\u2019vi' matches 'navi'."""
         import re
+
         text = text.replace("\u2019", "").replace("\u2018", "")
         text = text.replace("'", "").replace("\u2032", "")
         text = re.sub(r"[^\w\s]", " ", text)
@@ -217,6 +216,7 @@ class STTWakePipeline:
         if len(a) < 3 or len(b) < 3:
             return a == b
         from difflib import SequenceMatcher
+
         return SequenceMatcher(None, a, b).ratio() >= 0.65
 
     def _match_wake_phrase(self, transcript: str) -> tuple[Optional[int], Optional[str]]:
@@ -231,15 +231,15 @@ class STTWakePipeline:
             # Exact substring match
             pos = normalized.find(norm_phrase)
             if pos != -1:
-                after = normalized[pos + len(norm_phrase):].strip()
+                after = normalized[pos + len(norm_phrase) :].strip()
                 return (index, after if after else None)
             # Fuzzy word-level match
             phrase_words = norm_phrase.split()
             trans_words = normalized.split()
             for i in range(len(trans_words) - len(phrase_words) + 1):
-                window = trans_words[i:i + len(phrase_words)]
+                window = trans_words[i : i + len(phrase_words)]
                 if all(self._words_similar(w, p) for w, p in zip(window, phrase_words)):
-                    rest = " ".join(trans_words[i + len(phrase_words):])
+                    rest = " ".join(trans_words[i + len(phrase_words) :])
                     return (index, rest if rest else None)
         return (None, None)
 
@@ -253,7 +253,6 @@ class STTWakePipeline:
             logger.error("STT wake thread crashed", exc_info=True)
 
     def _stt_watch_loop_inner(self) -> None:
-        from google.cloud import speech
 
         self._recorder.start()
         logger.info(
@@ -315,10 +314,12 @@ class STTWakePipeline:
             sample_rate_hertz=SAMPLE_RATE,
             language_code="en-US",
             enable_automatic_punctuation=True,
-            speech_contexts=[speech.SpeechContext(
-                phrases=hint_phrases,
-                boost=20.0,
-            )],
+            speech_contexts=[
+                speech.SpeechContext(
+                    phrases=hint_phrases,
+                    boost=20.0,
+                )
+            ],
         )
         streaming_config = speech.StreamingRecognitionConfig(
             config=config,
@@ -342,23 +343,40 @@ class STTWakePipeline:
                 peak = max(abs(s) for s in frame)
                 frames_sent += 1
                 if frames_sent == 1:
-                    logger.debug("First audio frame sent to STT (%d bytes, peak=%d)", len(audio_bytes), peak)
+                    logger.debug(
+                        "First audio frame sent to STT (%d bytes, peak=%d)",
+                        len(audio_bytes),
+                        peak,
+                    )
                 elif frames_sent % 500 == 0:
-                    logger.debug("STT stream alive: %d frames sent (~%.0fs audio, peak=%d)", frames_sent, frames_sent * _STT_FRAME_LENGTH / SAMPLE_RATE, peak)
+                    logger.debug(
+                        "STT stream alive: %d frames sent (~%.0fs audio, peak=%d)",
+                        frames_sent,
+                        frames_sent * _STT_FRAME_LENGTH / SAMPLE_RATE,
+                        peak,
+                    )
                 elif peak > 2000 and frames_sent % 50 == 0:
                     logger.debug("Audio activity detected (peak=%d, frame=%d)", peak, frames_sent)
                 yield speech.StreamingRecognizeRequest(audio_content=audio_bytes)
 
         responses = client.streaming_recognize(streaming_config, frame_generator())
         for response in responses:
-            logger.debug("STT response: results=%d, speech_event=%s", len(response.results), response.speech_event_type)
+            logger.debug(
+                "STT response: results=%d, speech_event=%s",
+                len(response.results),
+                response.speech_event_type,
+            )
             for result in response.results:
                 if result.is_final:
                     transcript = result.alternatives[0].transcript
                     logger.debug("STT heard: '%s'", transcript)
                     keyword_index, command = self._match_wake_phrase(transcript)
                     if keyword_index is not None:
-                        logger.info("Wake phrase detected: '%s' (index=%d)", transcript, keyword_index)
+                        logger.info(
+                            "Wake phrase detected: '%s' (index=%d)",
+                            transcript,
+                            keyword_index,
+                        )
                         self._chime.play()
                         self._keyword_index = keyword_index
                         self.pending_command = command

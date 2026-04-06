@@ -1,11 +1,12 @@
 """Tests for dispatch.agents.base -- AgentRouter, BaseAgent, AgentError."""
 
-import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-from dispatch.agents.base import AgentError, AgentRouter, BaseAgent
+import pytest
+
+from dispatch.agents.base import AgentError, AgentRouter
 from dispatch.agents.openclaw import OpenClawAgent
-from dispatch.config import AgentConfig, PROJECT_ROOT
+from dispatch.config import AgentConfig
 
 
 class TestAgentError:
@@ -27,8 +28,11 @@ class TestAgentRouter:
     def test_router_route_returns_correct_agent(self, sample_agent_config):
         """Given 2 agents, route(0) and route(1) return the correct ones."""
         config2 = AgentConfig(
-            name="jarvis", type="openclaw", wake_word="assets/hey-jarvis.ppn",
-            endpoint="http://localhost:9999", token_env="JARVIS_TOKEN",
+            name="jarvis",
+            type="openclaw",
+            wake_word="assets/hey-jarvis.ppn",
+            endpoint="http://localhost:9999",
+            token_env="JARVIS_TOKEN",
             voice="en-US-AriaNeural",
         )
         router = AgentRouter([sample_agent_config, config2])
@@ -44,8 +48,11 @@ class TestAgentRouter:
     def test_router_keyword_paths(self, sample_agent_config):
         """ppn_paths returns paths in same order as agents."""
         config2 = AgentConfig(
-            name="jarvis", type="openclaw", wake_word="assets/hey-jarvis.ppn",
-            endpoint="http://localhost:9999", token_env="JARVIS_TOKEN",
+            name="jarvis",
+            type="openclaw",
+            wake_word="assets/hey-jarvis.ppn",
+            endpoint="http://localhost:9999",
+            token_env="JARVIS_TOKEN",
             voice="en-US-AriaNeural",
         )
         router = AgentRouter([sample_agent_config, config2])
@@ -83,8 +90,11 @@ class TestAgentRouter:
     def test_router_unknown_type_skipped(self):
         """Unknown agent type should be skipped with no crash."""
         bad_config = AgentConfig(
-            name="ghost", type="nonexistent", wake_word="assets/ghost.ppn",
-            endpoint="http://localhost:0", token_env="GHOST_TOKEN",
+            name="ghost",
+            type="nonexistent",
+            wake_word="assets/ghost.ppn",
+            endpoint="http://localhost:0",
+            token_env="GHOST_TOKEN",
             voice="en-US-GuyNeural",
         )
         router = AgentRouter([bad_config])

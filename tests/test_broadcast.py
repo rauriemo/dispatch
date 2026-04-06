@@ -4,23 +4,20 @@ import asyncio
 import sys
 import textwrap
 import threading
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from dispatch.agents.base import AgentError, AgentRouter
-from dispatch.audio import DebugPipeline, PipelineState
+from dispatch.audio import DebugPipeline
 from dispatch.config import AgentConfig, DispatchConfig, load_config
 from dispatch.main import (
+    _LATEST_PROMPT,
     _is_latest_keyword,
     _limit_to_n_sentences,
     _limit_to_one_sentence,
-    _LATEST_PROMPT,
 )
-from dispatch.tts import speak
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
+
 
 def _make_two_agent_config() -> DispatchConfig:
     """Config with two agents -- broadcast index should be 2."""
@@ -30,16 +27,24 @@ def _make_two_agent_config() -> DispatchConfig:
         log_level="DEBUG",
         agents=[
             AgentConfig(
-                name="navi", type="openclaw",
-                wake_word="assets/hey-navi.ppn", endpoint="http://localhost:18789",
-                token_env="OPENCLAW_TOKEN", voice="google/en-US-Chirp3-HD-Erinome",
-                wake_phrase="hey navi", fallback_voice="en-US-AvaMultilingualNeural",
+                name="navi",
+                type="openclaw",
+                wake_word="assets/hey-navi.ppn",
+                endpoint="http://localhost:18789",
+                token_env="OPENCLAW_TOKEN",
+                voice="google/en-US-Chirp3-HD-Erinome",
+                wake_phrase="hey navi",
+                fallback_voice="en-US-AvaMultilingualNeural",
             ),
             AgentConfig(
-                name="anthem", type="anthem",
-                wake_word="assets/hey-anthem.ppn", endpoint="ws://localhost:8081",
-                token_env="ANTHEM_TOKEN", voice="google/en-US-Chirp3-HD-Algieba",
-                wake_phrase="hey anthem", fallback_voice="en-US-AndrewNeural",
+                name="anthem",
+                type="anthem",
+                wake_word="assets/hey-anthem.ppn",
+                endpoint="ws://localhost:8081",
+                token_env="ANTHEM_TOKEN",
+                voice="google/en-US-Chirp3-HD-Algieba",
+                wake_phrase="hey anthem",
+                fallback_voice="en-US-AndrewNeural",
             ),
         ],
         debug=True,
@@ -56,6 +61,7 @@ def _make_stt_pipeline(wake_phrases):
     config.audio_device = -1
 
     from dispatch.audio import STTWakePipeline
+
     with patch.dict(sys.modules, {"pvrecorder": mock_pvrecorder_mod}):
         pipeline = STTWakePipeline(config, wake_phrases)
     return pipeline
@@ -63,20 +69,27 @@ def _make_stt_pipeline(wake_phrases):
 
 # ── Config: broadcast_wake_phrase ────────────────────────────────────
 
+
 class TestBroadcastConfig:
     def test_default_broadcast_wake_phrase(self):
         """broadcast_wake_phrase defaults to 'hey all'."""
         config = DispatchConfig(
-            hotkey="<ctrl>+<shift>+n", audio_device=-1,
-            log_level="DEBUG", agents=[], debug=True,
+            hotkey="<ctrl>+<shift>+n",
+            audio_device=-1,
+            log_level="DEBUG",
+            agents=[],
+            debug=True,
         )
         assert config.broadcast_wake_phrase == "hey all"
 
     def test_custom_broadcast_wake_phrase(self):
         """broadcast_wake_phrase can be set to a custom value."""
         config = DispatchConfig(
-            hotkey="<ctrl>+<shift>+n", audio_device=-1,
-            log_level="DEBUG", agents=[], debug=True,
+            hotkey="<ctrl>+<shift>+n",
+            audio_device=-1,
+            log_level="DEBUG",
+            agents=[],
+            debug=True,
             broadcast_wake_phrase="hey everyone",
         )
         assert config.broadcast_wake_phrase == "hey everyone"
@@ -129,6 +142,7 @@ class TestBroadcastConfig:
 
 # ── DebugPipeline: broadcast wake phrase ─────────────────────────────
 
+
 class TestDebugPipelineBroadcast:
     def test_broadcast_phrase_appended(self):
         """DebugPipeline should include the broadcast wake phrase in its list."""
@@ -180,6 +194,7 @@ class TestDebugPipelineBroadcast:
 
 # ── STTWakePipeline: broadcast phrase matching ───────────────────────
 
+
 class TestSTTWakeBroadcast:
     def test_broadcast_phrase_exact_match(self):
         """STTWakePipeline matches 'hey all' and returns broadcast index."""
@@ -225,6 +240,7 @@ class TestSTTWakeBroadcast:
 
 # ── Integration: broadcast main loop logic ───────────────────────────
 
+
 class TestLimitToOneSentence:
     """_limit_to_one_sentence hard-clamps agent responses in broadcast mode."""
 
@@ -264,13 +280,13 @@ class TestBroadcastIntegration:
             agent.send = AsyncMock()
 
         spoken = []
+
         async def mock_speak(text, voice, fallback=""):
             spoken.append((text, voice))
 
         monkeypatch.setattr("dispatch.main.speak", mock_speak)
 
         # Drive main.py's broadcast checkin path via module import
-        from dispatch import main as main_mod
         agent_fallbacks = {ac.name: ac.fallback_voice for ac in config.agents}
 
         # Checkin shortcut: transcript matches a checkin variant
@@ -296,7 +312,13 @@ class TestBroadcastIntegration:
 
     async def test_broadcast_checkin_variants(self):
         """All checkin transcript variants trigger the shortcut."""
-        for variant in ("checkin", "check in", "checking in", "CHECK IN", "Checking In"):
+        for variant in (
+            "checkin",
+            "check in",
+            "checking in",
+            "CHECK IN",
+            "Checking In",
+        ):
             assert variant.strip().lower() in ("checkin", "check in", "checking in")
 
     async def test_broadcast_sends_to_all_agents_with_one_sentence_clamp(self, monkeypatch):
@@ -320,6 +342,7 @@ class TestBroadcastIntegration:
         transcript = "what's your status"
 
         spoken = []
+
         async def mock_speak(text, voice, fallback=""):
             spoken.append((text, voice))
 
@@ -367,6 +390,7 @@ class TestBroadcastIntegration:
         router.agents[1].send = AsyncMock(return_value="All good here.")
 
         spoken = []
+
         async def mock_speak(text, voice, fallback=""):
             spoken.append((text, voice))
 
@@ -408,6 +432,7 @@ class TestBroadcastIntegration:
 
 # ── Wake phrase list construction (main.py logic) ────────────────────
 
+
 class TestBroadcastWakePhraseList:
     def test_stt_wake_phrases_include_broadcast(self):
         """Wake phrases list passed to STTWakePipeline includes broadcast entry."""
@@ -431,14 +456,21 @@ class TestBroadcastWakePhraseList:
     def test_single_agent_broadcast_index(self):
         """With one agent, broadcast index is 1."""
         config = DispatchConfig(
-            hotkey="<ctrl>+<shift>+n", audio_device=-1,
-            log_level="DEBUG", debug=True,
-            agents=[AgentConfig(
-                name="navi", type="openclaw",
-                wake_word="assets/hey-navi.ppn", endpoint="http://localhost:18789",
-                token_env="OPENCLAW_TOKEN", voice="en-US-GuyNeural",
-                wake_phrase="hey navi",
-            )],
+            hotkey="<ctrl>+<shift>+n",
+            audio_device=-1,
+            log_level="DEBUG",
+            debug=True,
+            agents=[
+                AgentConfig(
+                    name="navi",
+                    type="openclaw",
+                    wake_word="assets/hey-navi.ppn",
+                    endpoint="http://localhost:18789",
+                    token_env="OPENCLAW_TOKEN",
+                    voice="en-US-GuyNeural",
+                    wake_phrase="hey navi",
+                )
+            ],
             broadcast_wake_phrase="hey all",
         )
         broadcast_index = len(config.agents)
@@ -446,6 +478,7 @@ class TestBroadcastWakePhraseList:
 
 
 # ── _limit_to_n_sentences ────────────────────────────────────────────
+
 
 class TestLimitToNSentences:
     """Tests for the generalized n-sentence clamping helper."""
@@ -458,10 +491,7 @@ class TestLimitToNSentences:
 
     def test_abbreviation_not_split(self):
         """v2.1 should not be treated as a sentence boundary."""
-        assert (
-            _limit_to_n_sentences("Version v2.1 is ready. Deploy now.", 1)
-            == "Version v2.1 is ready."
-        )
+        assert _limit_to_n_sentences("Version v2.1 is ready. Deploy now.", 1) == "Version v2.1 is ready."
 
     def test_decimal_not_split(self):
         """3.14 should not be treated as a sentence boundary."""
@@ -489,6 +519,7 @@ class TestLimitToNSentences:
 
 
 # ── _is_latest_keyword ───────────────────────────────────────────────
+
 
 class TestIsLatestKeyword:
     def test_exact_match(self):
@@ -522,6 +553,7 @@ class TestIsLatestKeyword:
 
 # ── Latest integration tests ─────────────────────────────────────────
 
+
 class TestLatestIntegration:
     async def test_broadcast_latest_fans_out_with_two_sentence_clamp(self, monkeypatch):
         """'hey all latest' sends status prompt to all agents, clamps to 2 sentences."""
@@ -544,6 +576,7 @@ class TestLatestIntegration:
         agent_fallbacks = {ac.name: ac.fallback_voice for ac in config.agents}
 
         spoken = []
+
         async def mock_speak(text, voice, fallback=""):
             spoken.append((text, voice))
 
@@ -586,6 +619,7 @@ class TestLatestIntegration:
         router.agents[1].send = AsyncMock(return_value="Merged PR #42.")
 
         spoken = []
+
         async def mock_speak(text, voice, fallback=""):
             spoken.append((text, voice))
 
@@ -616,6 +650,7 @@ class TestLatestIntegration:
             agent.send = AsyncMock(side_effect=AgentError("down"))
 
         spoken = []
+
         async def mock_speak(text, voice, fallback=""):
             spoken.append((text, voice))
 

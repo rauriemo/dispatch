@@ -1,9 +1,5 @@
 """Tests for dispatch.notifications -- priority ordering, queue ops."""
 
-import time
-
-import pytest
-
 from dispatch.notifications import Notification, NotificationQueue
 
 

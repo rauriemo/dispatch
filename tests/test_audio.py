@@ -6,17 +6,14 @@ import math
 import queue
 import sys
 import threading
-
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, patch
 
 from dispatch.audio import (
-    PipelineState,
-    DebugPipeline,
-    _generate_chime,
-    _is_expected_stt_error,
-    MIXER_RATE,
     CHIME_DURATION_MS,
+    MIXER_RATE,
+    DebugPipeline,
+    PipelineState,
+    _is_expected_stt_error,
 )
 
 
@@ -36,10 +33,13 @@ class TestAudioPipelineStateMachine:
         mock_pvrecorder = MagicMock()
 
         with (
-            patch.dict(sys.modules, {
-                "pvporcupine": mock_pvporcupine,
-                "pvrecorder": mock_pvrecorder,
-            }),
+            patch.dict(
+                sys.modules,
+                {
+                    "pvporcupine": mock_pvporcupine,
+                    "pvrecorder": mock_pvrecorder,
+                },
+            ),
             patch.dict("os.environ", {"PICOVOICE_ACCESS_KEY": "test-key"}),
         ):
             pipeline = AudioPipeline(config)
@@ -163,6 +163,7 @@ class TestExpectedSTTErrors:
 
     def test_internal_server_error(self):
         from google.api_core.exceptions import InternalServerError
+
         exc = InternalServerError("500 Internal error encountered.")
         expected, reason = _is_expected_stt_error(exc)
         assert expected is True
@@ -170,6 +171,7 @@ class TestExpectedSTTErrors:
 
     def test_service_unavailable(self):
         from google.api_core.exceptions import ServiceUnavailable
+
         exc = ServiceUnavailable("503 Service unavailable.")
         expected, reason = _is_expected_stt_error(exc)
         assert expected is True
@@ -177,6 +179,7 @@ class TestExpectedSTTErrors:
 
     def test_deadline_exceeded(self):
         from google.api_core.exceptions import DeadlineExceeded
+
         exc = DeadlineExceeded("504 Deadline exceeded.")
         expected, reason = _is_expected_stt_error(exc)
         assert expected is True

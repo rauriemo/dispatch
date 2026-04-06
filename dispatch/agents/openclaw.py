@@ -18,8 +18,13 @@ from typing import TYPE_CHECKING
 import httpx
 import websockets
 
-from dispatch.agents.base import AgentError, BaseAgent, AgentRouter
-from dispatch.crypto import device_fingerprint, load_or_create_key, public_key_b64, sign_payload
+from dispatch.agents.base import AgentError, AgentRouter, BaseAgent
+from dispatch.crypto import (
+    device_fingerprint,
+    load_or_create_key,
+    public_key_b64,
+    sign_payload,
+)
 from dispatch.notifications import Notification
 
 if TYPE_CHECKING:
@@ -123,16 +128,20 @@ class OpenClawAgent(BaseAgent):
         self._pending[req_id] = future
 
         try:
-            await self._ws.send(json.dumps({
-                "type": "req",
-                "id": req_id,
-                "method": "chat.send",
-                "params": {
-                    "sessionKey": self._session_key,
-                    "message": text,
-                    "idempotencyKey": req_id,
-                },
-            }))
+            await self._ws.send(
+                json.dumps(
+                    {
+                        "type": "req",
+                        "id": req_id,
+                        "method": "chat.send",
+                        "params": {
+                            "sessionKey": self._session_key,
+                            "message": text,
+                            "idempotencyKey": req_id,
+                        },
+                    }
+                )
+            )
             return await asyncio.wait_for(future, timeout=60.0)
         except asyncio.TimeoutError as exc:
             raise AgentError("OpenClaw request timed out") from exc
@@ -189,10 +198,19 @@ class OpenClawAgent(BaseAgent):
         signed_at_ms = int(time.time() * 1000)
         token = self._token
 
-        sig_payload = "|".join([
-            "v2", fp, client_id, client_mode, role,
-            ",".join(scopes), str(signed_at_ms), token or "", nonce,
-        ])
+        sig_payload = "|".join(
+            [
+                "v2",
+                fp,
+                client_id,
+                client_mode,
+                role,
+                ",".join(scopes),
+                str(signed_at_ms),
+                token or "",
+                nonce,
+            ]
+        )
         signature = sign_payload(self._device_key, sig_payload)
 
         connect_req = {
@@ -304,7 +322,9 @@ class OpenClawAgent(BaseAgent):
                     logger.info("OpenClaw WebSocket reconnected to %s", self._ws_uri)
                 except Exception:
                     logger.warning(
-                        "Reconnect failed for %s", self.name, exc_info=True,
+                        "Reconnect failed for %s",
+                        self.name,
+                        exc_info=True,
                     )
                     if self._ws is not None:
                         try:
@@ -350,7 +370,9 @@ class OpenClawAgent(BaseAgent):
                     logger.info("OpenClaw node reconnected to %s", self._ws_uri)
                 except Exception:
                     logger.warning(
-                        "Node reconnect failed for %s", self.name, exc_info=True,
+                        "Node reconnect failed for %s",
+                        self.name,
+                        exc_info=True,
                     )
                     if self._node_ws is not None:
                         try:
@@ -389,9 +411,7 @@ class OpenClawAgent(BaseAgent):
         elif event_name == "chat" and payload.get("state") == "final":
             message = payload.get("message", {})
             content = message.get("content", [])
-            text = "".join(
-                c.get("text", "") for c in content if c.get("type") == "text"
-            )
+            text = "".join(c.get("text", "") for c in content if c.get("type") == "text")
 
             if run_id and run_id in self._pending:
                 fut = self._pending[run_id]
@@ -419,21 +439,32 @@ class OpenClawAgent(BaseAgent):
             if text:
                 await self._enqueue_notification(text, priority=0)
             if req_id and self._node_ws:
-                await self._node_ws.send(json.dumps({
-                    "type": "res",
-                    "id": req_id,
-                    "ok": True,
-                    "payload": {},
-                }))
+                await self._node_ws.send(
+                    json.dumps(
+                        {
+                            "type": "res",
+                            "id": req_id,
+                            "ok": True,
+                            "payload": {},
+                        }
+                    )
+                )
         else:
             logger.warning("Unknown invoke command from gateway: %s", command)
             if req_id and self._node_ws:
-                await self._node_ws.send(json.dumps({
-                    "type": "res",
-                    "id": req_id,
-                    "ok": False,
-                    "error": {"code": "UNKNOWN_COMMAND", "message": f"unknown: {command}"},
-                }))
+                await self._node_ws.send(
+                    json.dumps(
+                        {
+                            "type": "res",
+                            "id": req_id,
+                            "ok": False,
+                            "error": {
+                                "code": "UNKNOWN_COMMAND",
+                                "message": f"unknown: {command}",
+                            },
+                        }
+                    )
+                )
 
     def _handle_response(self, msg: dict) -> None:
         req_id = msg.get("id")

@@ -2,9 +2,7 @@
 
 import queue
 import struct
-
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dispatch.stt import debug_transcribe
 
@@ -35,13 +33,21 @@ class TestDebugTranscribe:
     async def test_debug_transcribe_returns_input(self):
         """debug_transcribe should return the typed input."""
         fq = queue.Queue()
-        with patch("dispatch.stt.asyncio.to_thread", new_callable=AsyncMock, return_value="hello world"):
+        with patch(
+            "dispatch.stt.asyncio.to_thread",
+            new_callable=AsyncMock,
+            return_value="hello world",
+        ):
             result = await debug_transcribe(fq)
         assert result == "hello world"
 
     async def test_debug_transcribe_strips_whitespace(self):
         """debug_transcribe should strip leading/trailing whitespace."""
         fq = queue.Queue()
-        with patch("dispatch.stt.asyncio.to_thread", new_callable=AsyncMock, return_value="  hello world  "):
+        with patch(
+            "dispatch.stt.asyncio.to_thread",
+            new_callable=AsyncMock,
+            return_value="  hello world  ",
+        ):
             result = await debug_transcribe(fq)
         assert result == "hello world"
