@@ -58,9 +58,9 @@ class TestDebugFullCycle:
 
         with (
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             await speak(response, routed_agent.voice)
 

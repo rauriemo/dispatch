@@ -16,7 +16,6 @@ import re
 from io import BytesIO
 
 import edge_tts
-import pygame
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +196,8 @@ async def _synthesize(
 
 async def _play(buffer: BytesIO) -> None:
     """Load a BytesIO MP3 buffer into pygame and wait for playback to finish."""
+    import pygame
+
     pygame.mixer.music.load(buffer, "mp3")
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():

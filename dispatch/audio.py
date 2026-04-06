@@ -10,8 +10,6 @@ import threading
 import time
 from typing import Optional
 
-import pygame
-
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
@@ -42,10 +40,11 @@ class PipelineState(enum.Enum):
     PAUSED = "paused"
 
 
-def _generate_chime() -> pygame.mixer.Sound:
+def _generate_chime():
     """Generate a 150ms 880Hz sine wave chime using stdlib only."""
+    import pygame
+
     num_samples = int(MIXER_RATE * CHIME_DURATION_MS / 1000)
-    # Stereo: duplicate each sample for L+R channels
     buf = array.array("h")
     for i in range(num_samples):
         val = int(32767 * 0.5 * math.sin(2 * math.pi * CHIME_FREQ * i / MIXER_RATE))

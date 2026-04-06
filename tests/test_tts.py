@@ -120,9 +120,9 @@ class TestOpenAIRoute:
 
         with (
             patch("dispatch.tts._synthesize_openai") as mock_synth,
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             mock_synth.return_value = BytesIO(b"openai-audio")
             await speak("hello", "openai/nova")
@@ -135,9 +135,9 @@ class TestOpenAIRoute:
         with (
             patch("dispatch.tts._synthesize_openai", side_effect=RuntimeError("API down")),
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             await speak("hello", "openai/nova", "en-US-AvaMultilingualNeural")
 
@@ -148,9 +148,9 @@ class TestElevenLabsRoute:
     async def test_elevenlabs_voice_dispatches(self):
         with (
             patch("dispatch.tts._synthesize_elevenlabs") as mock_synth,
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             mock_synth.return_value = BytesIO(b"elevenlabs-audio")
             await speak("hello", "elevenlabs/Rachel")
@@ -162,9 +162,9 @@ class TestGoogleRoute:
     async def test_google_voice_dispatches(self):
         with (
             patch("dispatch.tts._synthesize_google") as mock_synth,
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             mock_synth.return_value = BytesIO(b"google-audio")
             await speak("hello", "google/en-US-Neural2-F")
@@ -186,9 +186,9 @@ class TestFallback:
                 side_effect=RuntimeError("quota exceeded"),
             ),
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             await speak("hello", "google/en-US-Neural2-F", "en-US-AvaMultilingualNeural")
 
@@ -201,9 +201,9 @@ class TestFallback:
         with (
             patch("dispatch.tts._synthesize_openai", side_effect=RuntimeError("no key")),
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             await speak("hello", "openai/nova")
 
@@ -233,9 +233,9 @@ class TestPlayback:
 
         with (
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load", side_effect=capture_load),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load", side_effect=capture_load),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             await speak("test", "en-US-GuyNeural")
 
@@ -248,9 +248,9 @@ class TestPlayback:
 
         with (
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load") as mock_load,
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", return_value=False),
+            patch("pygame.mixer.music.load") as mock_load,
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", return_value=False),
         ):
             await speak("test", "en-US-GuyNeural")
 
@@ -264,9 +264,9 @@ class TestPlayback:
 
         with (
             patch("dispatch.tts.edge_tts.Communicate", mock_comm),
-            patch("dispatch.tts.pygame.mixer.music.load"),
-            patch("dispatch.tts.pygame.mixer.music.play"),
-            patch("dispatch.tts.pygame.mixer.music.get_busy", side_effect=busy_returns),
+            patch("pygame.mixer.music.load"),
+            patch("pygame.mixer.music.play"),
+            patch("pygame.mixer.music.get_busy", side_effect=busy_returns),
         ):
             await speak("test", "en-US-GuyNeural")
 
@@ -282,7 +282,7 @@ class TestPlayback:
 
         with (
             patch("dispatch.tts.edge_tts.Communicate", mock_comm_cls),
-            patch("dispatch.tts.pygame.mixer.music.load") as mock_load,
+            patch("pygame.mixer.music.load") as mock_load,
         ):
             await speak("", "en-US-GuyNeural")
 

@@ -5,10 +5,6 @@ import logging
 import os
 import threading
 
-import pygame
-from PIL import Image, ImageDraw
-from pynput.keyboard import GlobalHotKeys
-
 from dispatch.agents import AgentError, AgentRouter
 from dispatch.audio import AudioPipeline, DebugPipeline, PipelineState, STTWakePipeline
 from dispatch.config import load_config
@@ -60,8 +56,10 @@ def _is_latest_keyword(transcript: str) -> bool:
 # ── System tray ──────────────────────────────────────────────────────
 
 
-def _make_icon(color: str) -> Image.Image:
+def _make_icon(color: str):
     """Generate a 64x64 image with a filled circle for the tray icon."""
+    from PIL import Image, ImageDraw
+
     img = Image.new("RGB", (64, 64), "black")
     draw = ImageDraw.Draw(img)
     draw.ellipse((8, 8, 56, 56), fill=color)
@@ -95,6 +93,8 @@ def start_tray(pipeline, toggle_fn, quit_fn):
 
 def start_hotkey(hotkey_str: str, callback):
     """Start pynput GlobalHotKeys listener (angle-bracket format required)."""
+    from pynput.keyboard import GlobalHotKeys
+
     hotkeys = GlobalHotKeys({hotkey_str: callback})
     hotkeys.start()
     logger.info("Global hotkey registered: %s", hotkey_str)
@@ -105,10 +105,11 @@ def start_hotkey(hotkey_str: str, callback):
 
 
 def main(debug: bool = False) -> None:
+    import pygame
+
     config = load_config(debug)
     logger.info("Dispatch starting (debug=%s)", debug)
 
-    # Init pygame mixer: stereo for edge-tts MP3
     pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
 
     # Three-tier pipeline selection: Picovoice -> STT wake -> Debug (keyboard)
