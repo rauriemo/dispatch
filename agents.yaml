@@ -47,3 +47,10 @@ agents:
     token_env: PRISM_ANTHEM_TOKEN
     voice: google/en-US-Chirp3-HD-Puck
     fallback_voice: en-US-GuyNeural
+  noah:
+    type: anthem
+    wake_word: assets/hey-noah.ppn
+    endpoint: ws://localhost:8086
+    token_env: NOAH_ANTHEM_TOKEN
+    voice: google/en-US-Chirp3-HD-Orus
+    fallback_voice: en-US-JasonNeural
