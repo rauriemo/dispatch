@@ -48,7 +48,6 @@ channels:
   - kind: prism
     target: "localhost:3104"
     events: [task.completed, task.failed, wave.completed, maintenance.suggested]
-
 system:
   workflow_changes_require_approval: true
   constraints:
